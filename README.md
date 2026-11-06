@@ -1,54 +1,50 @@
-# 🌐 XSwap
+# 🌐 Plan B
 
-XSwap is a Chrome extension that lets you buy a token straight from its ticker card on X. When a tweet mentions a supported cashtag (`$ETH`, `$UNI`, `$AERO`, …), X shows a ticker card. XSwap adds a **Buy** button to that card, and pressing it opens a swap panel inside the card. You never leave the timeline.
+Plan B is a Chrome extension that turns X ticker cards into non-custodial trading panels. When a tweet mentions a supported cashtag (`$ETH`, `$UNI`, `$AERO`, …), Plan B lets you place a market or advanced order without leaving the timeline.
 
 ## Features ✨
 
-- **Swap through Uniswap** 🦄: quotes and swaps run through the Uniswap Trading API on Base, Ethereum, Arbitrum, Optimism and Unichain. Your browser wallet (e.g. MetaMask) signs the transactions. These are real swaps with real funds.
-- **Token safety checks with Intercepta** 🛡️: before you buy, XSwap checks the token and the swap transaction with Intercepta. Tokens flagged as risky get a warning or are blocked, and you must confirm before continuing.
-- **Creator kickbacks with World ID** 🪪: a tweet's author earns 0.5% of every buy made from the ticker card in their tweet. The fee is paid through Uniswap's integrator fee, straight to the author's wallet. To earn, the author proves with World ID that they are a unique human, so one person can't farm kickbacks with many X accounts.
+- **Flash's live token catalog** 🔎: ticker symbols are resolved through Flash at runtime, including the canonical address, decimals, price, liquidity, logo, and risk flag on each network. There is no curated token allowlist to maintain.
+- **Advanced orders on every documented Flash chain** ⚡: market, limit, TWAP/DCA schedules, stop, stop-loss, take-profit, bracket, trailing-stop and trailing-stop-limit orders on Ethereum, Base, Arbitrum, Optimism, Avalanche, BNB Chain, Polygon, HyperEVM, Ink, Monad, Plasma, Robinhood Chain, Arc, and Solana. DCA uses Flash TWAP buckets because the current API schema has no separate `dca` enum.
+- **Token safety checks with Intercepta** 🛡️: before you buy, Plan B checks the token and the swap transaction with Intercepta. Tokens flagged as risky get a warning or are blocked, and you must confirm before continuing.
+- **Non-custodial execution** 🔐: the extension uses the connected browser wallet for approvals and Flash order signatures. The backend holds the API key, never user funds or wallet keys.
 
 ## How It Works 🔧
 
 ```
-X ticker card ──► x-ticker-swap.js (swap panel)
-                     │  wallet calls ──► bridge.js ──► window.ethereum
+X ticker card ──► x-ticker-swap.js (advanced-order panel)
+                     │  wallet calls ──► bridge.js ──► EVM wallet / Solana wallet
                      ▼
                  background.js ──► backend (localhost:8000)
-                                     ├─ /uniswap/*     Uniswap Trading API proxy
+                                     ├─ /flash/*       Definitive Flash API proxy
                                      ├─ /intercepta/*  token and transaction checks
                                      └─ /kickbacks/*   World ID verification + author registry
 ```
 
-- **`extension/`**: the Manifest V3 extension. `x-ticker-swap.js` injects the Buy button and swap panel, `bridge.js` runs in the page's main world to reach your wallet, and `kickbacks.html` is the World ID verification page for authors.
+- **`extension/`**: the Manifest V3 extension. `x-ticker-swap.js` injects the order panel and handles Flash quote/sign/submit flows; `bridge.js` runs in the page's main world to reach your wallet.
 - **`backend/`**: a small Express server that keeps the API keys and the World ID signing key out of the extension. Verified authors are stored in `backend/data/kickbacks.json`.
 
-## Uniswap integration 🦄
+## Definitive Flash integration ⚡
 
-Every quote and swap goes through the [Uniswap Trading API](https://developers.uniswap.org), routed over Uniswap v2, v3 and v4 pools on Base, Ethereum, Arbitrum, Optimism and Unichain. Where to find it:
+Every order goes through the [Definitive Flash API](https://flash.definitive.fi/docs). Flash supplies live asset discovery, the quote, required setup actions, EIP-712 or Ed25519 signing payloads, and managed onchain execution.
 
 | What | Code |
 |---|---|
-| API proxy that keeps the API key on the server (`check_approval`, `quote`, `swap` only) | [`backend/uniswap.js`](backend/uniswap.js), route at [`backend/server.js#L14`](backend/server.js#L14) |
-| Client for the proxy, with no-route errors mapped to a readable message | [`extension/x-ticker-swap.js#L291-L306`](extension/x-ticker-swap.js#L291-L306) |
-| Quote request: exact input, v2/v3/v4 routing, auto slippage, and the author's kickback as an integrator fee | [`extension/x-ticker-swap.js#L309-L324`](extension/x-ticker-swap.js#L309-L324) (fee at [L322](extension/x-ticker-swap.js#L322)) |
-| Splitting the quote's output into the buyer's amount and the author's fee | [`extension/x-ticker-swap.js#L327-L335`](extension/x-ticker-swap.js#L327-L335) |
-| Turning the quote's `permitData` into an EIP-712 Permit2 signature request | [`extension/x-ticker-swap.js#L338-L346`](extension/x-ticker-swap.js#L338-L346) |
-| Live quotes while typing (debounced, stale responses dropped) | [`extension/x-ticker-swap.js#L1259-L1290`](extension/x-ticker-swap.js#L1259-L1290) |
-| Swap flow: `check_approval` → `quote` → Permit2 signature → `swap` → send | [`extension/x-ticker-swap.js#L1395-L1469`](extension/x-ticker-swap.js#L1395-L1469) |
-
-Our feedback on building with the Uniswap API is in [FEEDBACK.md](FEEDBACK.md).
+| API proxy that keeps `DEFINITIVE_FLASH_API_KEY` server-side | [`backend/flash.js`](backend/flash.js) |
+| Advanced-order request construction and validation | [`extension/x-ticker-swap.js`](extension/x-ticker-swap.js) |
+| Quote → setup transaction → EIP-712/Ed25519 sign → submit → status flow | [`extension/x-ticker-swap.js`](extension/x-ticker-swap.js) |
+| Offline API reference | [`docs/definitive-flash/openapi.json`](docs/definitive-flash/openapi.json) |
 
 ## Intercepta security checks 🛡️
 
-People and autonomous agents scan X for alpha and act on cashtags fast, often on tokens someone is shilling. XSwap puts an Intercepta check between seeing a ticker and paying for it, so anything buying through a ticker card sees whether the token and the transaction are safe before money moves.
+People and autonomous agents scan X for alpha and act on cashtags fast, often on tokens someone is shilling. Plan B puts an Intercepta check between seeing a ticker and paying for it, so anything buying through a ticker card sees whether the token and the transaction are safe before money moves.
 
 - **Token check when the panel opens.** Intercepta rates the token. `warn` shows the reasons in the panel, and `block` disables Buy (selling stays possible, so holders can get out).
-- **Transaction simulation before every signature.** The approval reset, the approval and the swap are each simulated before the wallet is asked to sign. The panel shows what you'll receive according to the simulation. If Intercepta flags the transaction, it's held until the user picks **Cancel** or **Continue anyway**.
+- **Transaction simulation for setup actions.** Flash approval and native-wrap transactions are simulated before being sent. If Intercepta flags an action, it is held until the user picks **Cancel** or **Continue anyway**.
 
 **Example:** real PEPE lives on Ethereum, but on Base a copycat also calls itself PEPE, and Intercepta flags it as a honeypot. Open the Buy panel on a `$PEPE` card: on Ethereum the check passes, on Base Buy is disabled.
 
-**Coming next: any token, from its address.** Today XSwap works on the ticker cards X renders, for a curated list of tokens. Next, anyone will be able to paste a token's contract address into a tweet and get the same buy card on it. That opens XSwap to every new token, which is also where most scams are. Intercepta becomes the gate that makes this safe: every pasted token is checked before the card lets anyone buy it.
+Plan B currently attaches to ticker cards X renders, but the token behind each ticker is resolved from Flash's live catalog instead of a curated allowlist. Direct contract-address parsing from ordinary tweet text is the next parsing-layer milestone.
 
 Where to find it:
 
@@ -67,7 +63,7 @@ Where to find it:
 - Token risk and transaction simulation return clear `action` values and readable detector descriptions, so we could show them to users without rewriting them.
 - Token risk is on `/v2` and simulation on `/v1`, with different response shapes. One version would make the client simpler.
 - Positive signals (`HIGH_REPUTATION_TOKEN`) come back in the same `detectors` list as risks, so we filter them out by code. A severity or polarity field would remove that guesswork.
-- Transaction simulation doesn't cover every chain we swap on (Unichain is missing), so part of our flow has no simulation.
+- Transaction simulation is used where Intercepta supports the selected EVM chain. Solana displays Flash's asset risk signal and uses the wallet's native signing flow.
 
 ## World ID 🪪
 
@@ -76,7 +72,7 @@ Kickback authors prove with World ID (Proof of Human, IDKit v4) that they are on
 ## Requirements
 
 - [Node (v18+)](https://nodejs.org/en/download/)
-- Chrome (or another Chromium browser) with a wallet extension such as MetaMask
+- Chrome (or another Chromium browser) with an EVM wallet such as MetaMask and/or a Solana wallet such as Phantom
 
 ## Quick start
 
@@ -87,7 +83,7 @@ git clone git@github.com:Scannty/eth-blinks.git
 ### Backend
 
 1. Create `backend/.env` (see `.env.example`):
-   - `UNISWAP_API_KEY`: a free key from the [Uniswap developer dashboard](https://developers.uniswap.org/dashboard).
+   - `DEFINITIVE_FLASH_API_KEY`: your key from the [Flash getting-started guide](https://flash.definitive.fi/docs/getting-started).
    - `INTERCEPTA_API_KEY`: from [Intercepta](https://intercepta.io).
    - `WORLD_*`: in the [World Developer Portal](https://developer.world.org), create an external app, enable World ID 4.0 and create the `earn-kickbacks` action. Use `staging` to test with the [World ID Simulator](https://simulator.worldcoin.org), or `production` for the real World App.
 
@@ -101,8 +97,9 @@ node server.js
 
 ### Extension
 
-1. Open `chrome://extensions` and enable **Developer mode**
-2. Click **Load unpacked** and select the `extension` folder
-3. Open x.com and look for a ticker card with a **Buy** button
+1. Run `npm install && npm run build:solana` in `extension/` when rebuilding the bundled Solana transaction decoder.
+2. Open `chrome://extensions` and enable **Developer mode**.
+3. Click **Load unpacked** and select the `extension` folder.
+4. Open x.com and look for a ticker card with a **Buy** button.
 
 After changing extension code, click the reload icon on the extension card and refresh X. The extension expects the backend at `http://localhost:8000` (`BACKEND_URL` in `background.js`).

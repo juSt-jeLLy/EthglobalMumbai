@@ -1,24 +1,33 @@
-// Uniswap swap panel for X ticker cards.
+// Definitive Flash advanced-order panel for X ticker cards.
 // X renders a ticker card (icon, name, price, change, sparkline) for cashtags like $ETH.
 // This script adds a "Buy" button inside supported cards. Pressing it expands a swap panel,
-// styled as part of the card, that quotes and executes the swap through the Uniswap Trading
-// API (proxied by backend so the API key stays server-side) on the selected network.
+// styled as part of the card, that quotes and submits market, limit, trigger, TWAP,
+// bracket and trailing orders through Flash (proxied by the backend).
 (() => {
   const SOURCE_ID = "x-ticker-swap";
-  const HOST_ATTR = "data-xswap-ticker-swap";
+  const HOST_ATTR = "data-plan-b-ticker-swap";
 
   // ---------------------------------------------------------------------------
-  // Networks and tokens. Every address and its decimals were verified on-chain,
-  // and every token was checked to have a Uniswap route from USDC.
+  // Flash's officially supported networks. Tokens are discovered from /search at
+  // runtime so the extension follows Flash's live catalog rather than a stale list.
   // ---------------------------------------------------------------------------
   const CHAINS = {
-    8453: { name: "Base", hex: "0x2105", icon: "base", explorer: "https://basescan.org", explorerName: "BaseScan", rpc: "https://mainnet.base.org", gasReserveWei: 200000000000000n },
-    1: { name: "Ethereum", hex: "0x1", icon: "ethereum", explorer: "https://etherscan.io", explorerName: "Etherscan", rpc: "https://ethereum-rpc.publicnode.com", gasReserveWei: 3000000000000000n },
-    42161: { name: "Arbitrum", hex: "0xa4b1", icon: "arbitrum", explorer: "https://arbiscan.io", explorerName: "Arbiscan", rpc: "https://arb1.arbitrum.io/rpc", gasReserveWei: 200000000000000n },
-    10: { name: "Optimism", hex: "0xa", icon: "optimism", explorer: "https://optimistic.etherscan.io", explorerName: "Etherscan", rpc: "https://mainnet.optimism.io", gasReserveWei: 200000000000000n },
-    130: { name: "Unichain", hex: "0x82", icon: "unichain", explorer: "https://uniscan.xyz", explorerName: "Uniscan", rpc: "https://mainnet.unichain.org", gasReserveWei: 200000000000000n },
+    8453: { name: "Base", flash: "base", hex: "0x2105", icon: "base", explorer: "https://basescan.org", explorerName: "BaseScan", rpc: "https://mainnet.base.org", native: ["Ether", "ETH"], gasReserveWei: 200000000000000n },
+    1: { name: "Ethereum", flash: "ethereum", hex: "0x1", icon: "ethereum", explorer: "https://etherscan.io", explorerName: "Etherscan", rpc: "https://ethereum-rpc.publicnode.com", native: ["Ether", "ETH"], gasReserveWei: 3000000000000000n },
+    42161: { name: "Arbitrum", flash: "arbitrum", hex: "0xa4b1", icon: "arbitrum", explorer: "https://arbiscan.io", explorerName: "Arbiscan", rpc: "https://arb1.arbitrum.io/rpc", native: ["Ether", "ETH"], gasReserveWei: 200000000000000n },
+    10: { name: "Optimism", flash: "optimism", hex: "0xa", icon: "optimism", explorer: "https://optimistic.etherscan.io", explorerName: "Etherscan", rpc: "https://mainnet.optimism.io", native: ["Ether", "ETH"], gasReserveWei: 200000000000000n },
+    43114: { name: "Avalanche", flash: "avalanche", hex: "0xa86a", rpc: "https://api.avax.network/ext/bc/C/rpc", native: ["Avalanche", "AVAX"], explorer: "https://snowtrace.io", explorerName: "Snowtrace", gasReserveWei: 10000000000000000n },
+    56: { name: "BNB Chain", flash: "bsc", hex: "0x38", rpc: "https://bsc-dataseed.bnbchain.org", native: ["BNB", "BNB"], explorer: "https://bscscan.com", explorerName: "BscScan", gasReserveWei: 1000000000000000n },
+    999: { name: "HyperEVM", flash: "hyperevm", hex: "0x3e7", rpc: "https://rpc.hyperliquid.xyz/evm", native: ["HYPE", "HYPE"], gasReserveWei: 1000000000000000n },
+    57073: { name: "Ink", flash: "ink", hex: "0xdef1", rpc: "https://rpc-gel.inkonchain.com", native: ["Ether", "ETH"], explorer: "https://explorer.inkonchain.com", explorerName: "Ink Explorer", gasReserveWei: 200000000000000n },
+    143: { name: "Monad", flash: "monad", hex: "0x8f", rpc: "https://rpc.monad.xyz", native: ["Monad", "MON"], gasReserveWei: 1000000000000000n },
+    9745: { name: "Plasma", flash: "plasma", hex: "0x2611", rpc: "https://rpc.plasma.to", native: ["XPL", "XPL"], gasReserveWei: 1000000000000000n },
+    137: { name: "Polygon", flash: "polygon", hex: "0x89", rpc: "https://polygon-bor-rpc.publicnode.com", native: ["POL", "POL"], explorer: "https://polygonscan.com", explorerName: "PolygonScan", gasReserveWei: 10000000000000000n },
+    4663: { name: "Robinhood Chain", flash: "robinhood", hex: "0x1237", rpc: "https://rpc.mainnet.chain.robinhood.com", native: ["Ether", "ETH"], explorer: "https://robinhoodchain.blockscout.com", explorerName: "Blockscout", gasReserveWei: 1000000000000000n },
+    5042: { name: "Arc", flash: "arc", hex: "0x13b2", rpc: "https://rpc.drpc.mainnet.arc.io", native: ["USDC", "USDC"], gasReserveWei: 1000000000000000n },
+    solana: { name: "Solana", flash: "solana", native: ["Solana", "SOL"], explorer: "https://solscan.io", explorerName: "Solscan" },
   };
-  const CHAIN_ORDER = [8453, 1, 42161, 10, 130];
+  const CHAIN_ORDER = [8453, 1, 42161, 10, 43114, 56, 137, 999, 57073, 143, 9745, 4663, 5042, "solana"];
   const DEFAULT_CHAIN = 8453;
   const NATIVE = "0x0000000000000000000000000000000000000000";
 
@@ -145,19 +154,87 @@
     AERO: ["AERO"], VIRTUAL: ["VIRTUAL"], TOSHI: ["TOSHI"], ZORA: ["ZORA"], PEPE: ["PEPE"], SHIB: ["SHIB"],
     LDO: ["LDO"], ENS: ["ENS"], ONDO: ["ONDO"], ARB: ["ARB"], OP: ["OP"], PENDLE: ["PENDLE"], GMX: ["GMX"], VELO: ["VELO"],
   };
-  const QUOTE_TOKENS = ["USDC", "ETH", "USDT"];
-  // Used as the swapper for quotes before a wallet is connected
-  const PREVIEW_SWAPPER = "0x1111111111111111111111111111111111111111";
-
+  const QUOTE_TOKENS = ["USDC", "USDT", "ETH", "SOL", "BNB", "AVAX", "POL", "HYPE", "MON", "XPL"];
+  function isNativeAddress(address) { return address === NATIVE || /^0x[eE]{40}$/.test(address || ""); }
   function tokenOn(chainId, symbol) {
     const entry = TOKEN_ADDRESSES[chainId] && TOKEN_ADDRESSES[chainId][symbol];
-    return entry ? { address: entry[0], decimals: entry[1] } : null;
+    return entry ? { address: entry[0], decimals: entry[1], ...(entry[2] || {}) } : null;
   }
   function tokenForTicker(ticker, chainId) {
     return (TICKER_TO_TOKENS[ticker] || []).find((symbol) => tokenOn(chainId, symbol)) || null;
   }
   function chainsForTicker(ticker) {
-    return CHAIN_ORDER.filter((chainId) => tokenForTicker(ticker, chainId));
+    return CHAIN_ORDER.filter((chainId) => {
+      const token = tokenForTicker(ticker, chainId);
+      return token && QUOTE_TOKENS.some((quote) => quote !== token && tokenOn(chainId, quote));
+    });
+  }
+
+  const FLASH_TO_CHAIN = Object.fromEntries(CHAIN_ORDER.map((id) => [CHAINS[id].flash, id]));
+  const assetSearches = new Map();
+  function registerFlashAsset(asset) {
+    const chainId = FLASH_TO_CHAIN[asset.chain];
+    if (chainId === undefined || !asset.symbol || !asset.address) return;
+    const symbol = asset.symbol;
+    TOKEN_ADDRESSES[chainId] ||= {};
+    const previous = TOKEN_ADDRESSES[chainId][symbol];
+    const previousLiquidity = previous && previous[2] ? Number(previous[2].liquidity || 0) : -1;
+    if (!previous || Number(asset.liquidity || 0) >= previousLiquidity) {
+      TOKEN_ADDRESSES[chainId][symbol] = [asset.address, asset.decimals, { ...asset }];
+    }
+    TOKEN_INFO[symbol] = {
+      ...(TOKEN_INFO[symbol] || {}),
+      name: asset.name || symbol,
+      color: (TOKEN_INFO[symbol] && TOKEN_INFO[symbol].color) || "#536471",
+      stable: ["USDC", "USDT", "DAI", "USDE", "USDS"].includes(symbol.toUpperCase()),
+      imageUrl: asset.imageUrl || (TOKEN_INFO[symbol] && TOKEN_INFO[symbol].imageUrl),
+      price: Number(asset.price) > 0 ? Number(asset.price) : undefined,
+      riskFlagged: !!asset.riskFlagged,
+    };
+  }
+
+  function searchAssets(query, chain) {
+    const key = `${query.toUpperCase()}:${chain || "all"}`;
+    if (!assetSearches.has(key)) {
+      assetSearches.set(key, flashApi("search", { query, ...(chain && { chain }), limit: 25 }, "GET").then((result) => {
+        const exact = (result.assets || []).filter((asset) => asset.symbol.toUpperCase() === query.toUpperCase());
+        exact.forEach(registerFlashAsset);
+        return exact;
+      }).catch((error) => {
+        assetSearches.delete(key);
+        throw error;
+      }));
+    }
+    return assetSearches.get(key);
+  }
+
+  async function discoverTicker(ticker) {
+    const key = ticker.toUpperCase();
+    const aliases = key === "BTC" ? ["BTC", "WBTC", "cbBTC"] : [key];
+    await Promise.allSettled([...new Set([...aliases, ...QUOTE_TOKENS])].map((symbol) => searchAssets(symbol)));
+    // Global search is ranked and capped. Fill any omitted network with a scoped
+    // lookup so a valid lower-liquidity deployment remains selectable.
+    await Promise.allSettled(aliases.flatMap((alias) => CHAIN_ORDER
+      .filter((chainId) => !Object.keys(TOKEN_ADDRESSES[chainId] || {}).some((symbol) => symbol.toUpperCase() === alias.toUpperCase()))
+      .map((chainId) => searchAssets(alias, CHAINS[chainId].flash))));
+    const targetChains = CHAIN_ORDER.filter((chainId) => aliases.some((alias) =>
+      Object.keys(TOKEN_ADDRESSES[chainId] || {}).some((symbol) => symbol.toUpperCase() === alias.toUpperCase())
+    ));
+    await Promise.all(targetChains.map(async (chainId) => {
+      if (QUOTE_TOKENS.some((symbol) => tokenOn(chainId, symbol))) return;
+      for (const symbol of QUOTE_TOKENS) {
+        try { await searchAssets(symbol, CHAINS[chainId].flash); } catch { continue; }
+        if (tokenOn(chainId, symbol)) return;
+      }
+    }));
+    TICKER_TO_TOKENS[key] = aliases.flatMap((alias) => {
+      const matching = new Set();
+      CHAIN_ORDER.forEach((chainId) => Object.keys(TOKEN_ADDRESSES[chainId] || {}).forEach((symbol) => {
+        if (symbol.toUpperCase() === alias.toUpperCase()) matching.add(symbol);
+      }));
+      return [...matching];
+    });
+    return chainsForTicker(key);
   }
 
   // ---------------------------------------------------------------------------
@@ -167,10 +244,12 @@
   const inExtension = !!(globalThis.chrome && chrome.runtime && chrome.runtime.id);
   let nextRpcId = 1;
   const pendingRpcs = new Map();
-  const wallet = { account: null, chainId: null }; // chainId as a number
+  const wallet = { account: null, chainId: null, solanaAccount: null };
+  function isSolana(chainId) { return chainId === "solana"; }
+  function accountFor(chainId) { return isSolana(chainId) ? wallet.solanaAccount : wallet.account; }
 
   function refreshAllPanels() {
-    document.querySelectorAll(`[${HOST_ATTR}]`).forEach((host) => host.dispatchEvent(new Event("xswap:wallet")));
+    document.querySelectorAll(`[${HOST_ATTR}]`).forEach((host) => host.dispatchEvent(new Event("plan-b:wallet")));
   }
 
   if (inExtension) {
@@ -178,15 +257,17 @@
       if (event.source !== window) return;
       const data = event.data;
       if (!data) return;
-      if (data.type === "xswap:bridge-response" && data.sourceId === SOURCE_ID) {
+      if (data.type === "plan-b:bridge-response" && data.sourceId === SOURCE_ID) {
         const pending = pendingRpcs.get(data.rpcId);
         if (!pending) return;
         pendingRpcs.delete(data.rpcId);
         if (data.error) pending.reject(Object.assign(new Error(data.error.message), { code: data.error.code }));
         else pending.resolve(data.result);
-      } else if (data.type === "xswap:bridge-event") {
+      } else if (data.type === "plan-b:bridge-event") {
         if (data.event === "accountsChanged") wallet.account = (data.payload && data.payload[0]) || null;
         if (data.event === "chainChanged") wallet.chainId = parseInt(data.payload, 16);
+        if (data.event === "solanaAccountChanged") wallet.solanaAccount = data.payload || null;
+        if (data.event === "solanaDisconnect") wallet.solanaAccount = null;
         refreshAllPanels();
       }
     });
@@ -200,11 +281,16 @@
     return new Promise((resolve, reject) => {
       const rpcId = nextRpcId++;
       pendingRpcs.set(rpcId, { resolve, reject });
-      window.postMessage({ type: "xswap:bridge-request", sourceId: SOURCE_ID, rpcId, method, params }, window.location.origin);
+      window.postMessage({ type: "plan-b:bridge-request", sourceId: SOURCE_ID, rpcId, method, params }, window.location.origin);
     });
   }
 
-  async function connectWallet() {
+  async function connectWallet(chainId) {
+    if (isSolana(chainId)) {
+      wallet.solanaAccount = await walletRequest("solana_connect");
+      refreshAllPanels();
+      return;
+    }
     const accounts = await walletRequest("eth_requestAccounts");
     wallet.account = accounts[0];
     wallet.chainId = parseInt(await walletRequest("eth_chainId"), 16);
@@ -212,6 +298,10 @@
   }
 
   async function ensureChain(chainId) {
+    if (isSolana(chainId)) {
+      if (!wallet.solanaAccount) await connectWallet(chainId);
+      return;
+    }
     wallet.chainId = parseInt(await walletRequest("eth_chainId"), 16);
     if (wallet.chainId === chainId) return;
     const chain = CHAINS[chainId];
@@ -222,9 +312,9 @@
       await walletRequest("wallet_addEthereumChain", [{
         chainId: chain.hex,
         chainName: chain.name,
-        nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+        nativeCurrency: { name: chain.native[0], symbol: chain.native[1], decimals: 18 },
         rpcUrls: [chain.rpc],
-        blockExplorerUrls: [chain.explorer],
+        ...(chain.explorer && { blockExplorerUrls: [chain.explorer] }),
       }]);
     }
     wallet.chainId = chainId;
@@ -248,7 +338,7 @@
   }
 
   async function sendTransaction(tx) {
-    if (!tx || !tx.data || tx.data === "0x") throw new Error("Uniswap returned an empty transaction");
+    if (!tx || !tx.data || tx.data === "0x") throw new Error("Flash returned an empty transaction");
     const params = { from: wallet.account, to: tx.to, data: tx.data, value: toHexQuantity(tx.value) };
 
     // The API's gasLimit leaves little headroom: if other trades in the same block move the pool,
@@ -268,7 +358,7 @@
 
   async function tokenBalance(chainId, symbol) {
     const token = tokenOn(chainId, symbol);
-    if (token.address === NATIVE) return BigInt(await walletRequest("eth_getBalance", [wallet.account, "latest"]));
+    if (isNativeAddress(token.address)) return BigInt(await walletRequest("eth_getBalance", [wallet.account, "latest"]));
     const data = "0x70a08231" + wallet.account.slice(2).toLowerCase().padStart(64, "0"); // balanceOf(address)
     const result = await walletRequest("eth_call", [{ to: token.address, data }, "latest"]);
     return BigInt(result && result !== "0x" ? result : 0);
@@ -284,20 +374,20 @@
       }
     })
     .catch(() => {});
+  walletRequest("solana_account").then((account) => { wallet.solanaAccount = account; refreshAllPanels(); }).catch(() => {});
 
   // ---------------------------------------------------------------------------
-  // Uniswap Trading API (via the extension background -> backend proxy)
+  // Definitive Flash API (via the extension background -> backend proxy)
   // ---------------------------------------------------------------------------
-  function uniswapApi(endpoint, body) {
-    if (!inExtension) return Promise.reject(new Error("Live quotes need the XSwap extension"));
+  function flashApi(endpoint, body, method = "POST") {
+    if (!inExtension) return Promise.reject(new Error("Live quotes need the Plan B extension"));
     return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ action: "uniswap", endpoint, body }, (response) => {
+      chrome.runtime.sendMessage({ action: "flash", endpoint, body, method }, (response) => {
         if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
         if (!response.ok) {
           const body = response.body || {};
-          const message = body.errorCode === "NoRouteFoundError" || body.errorCode === "NoQuotesAvailable"
-            ? "No Uniswap route for this pair"
-            : body.detail || body.message || body.error || `Uniswap API error ${response.status}`;
+          const apiError = body.error;
+          const message = (apiError && (apiError.message || apiError.code)) || body.detail || body.message || apiError || `Flash API error ${response.status}`;
           return reject(Object.assign(new Error(message), { status: response.status, errorCode: body.errorCode }));
         }
         resolve(response.body);
@@ -305,57 +395,21 @@
     });
   }
 
-  // kickback: { bips, wallet } to pay the tweet's author a share of the output, or null
-  function quoteRequest(chainId, tokenIn, tokenOut, amount, swapper, kickback) {
-    const request = {
-      type: "EXACT_INPUT",
-      amount,
-      tokenInChainId: chainId,
-      tokenOutChainId: chainId,
-      tokenIn: tokenOn(chainId, tokenIn).address,
-      tokenOut: tokenOn(chainId, tokenOut).address,
-      swapper,
-      protocols: ["V2", "V3", "V4"], // classic AMM swap (a single wallet transaction)
-      routingPreference: "BEST_PRICE",
-      autoSlippage: "DEFAULT",
-    };
-    if (kickback) request.integratorFees = [{ bips: kickback.bips, recipient: kickback.wallet }];
-    return request;
-  }
-
-  // With a fee, quote.output is the gross amount: split it into what the swapper and the fee recipient get
-  function quoteOutputs(quote) {
-    const outputs = quote.aggregatedOutputs || [];
-    const own = outputs.find((output) => !output.fee);
-    const fee = outputs.find((output) => output.fee);
-    return {
-      amountOut: own ? BigInt(own.amount) : quote.output ? BigInt(quote.output.amount) : null,
-      kickbackOut: fee ? BigInt(fee.amount) : null,
-    };
-  }
-
-  // EIP-712 payload for eth_signTypedData_v4 from the API's permitData
-  function typedDataFromPermit(permitData) {
-    const domainFields = [
-      ["name", "string"], ["version", "string"], ["chainId", "uint256"], ["verifyingContract", "address"], ["salt", "bytes32"],
-    ].filter(([key]) => permitData.domain[key] !== undefined).map(([name, type]) => ({ name, type }));
-    const types = { EIP712Domain: domainFields, ...permitData.types };
-    const referenced = new Set(Object.values(permitData.types).flat().map((field) => field.type.replace(/\[\]$/, "")));
-    const primaryType = Object.keys(permitData.types).find((name) => !referenced.has(name));
-    return JSON.stringify({ types, domain: permitData.domain, primaryType, message: permitData.values });
+  function typedDataPayload(value) {
+    return typeof value === "string" ? value : JSON.stringify(value);
   }
 
   // ---------------------------------------------------------------------------
   // Intercepta security checks (via the extension background -> backend proxy)
   // ---------------------------------------------------------------------------
-  // Chains Intercepta can simulate transactions on (Unichain isn't supported yet)
+  // Chains Intercepta can currently simulate through this integration.
   const TX_SCAN_CHAINS = new Set([1, 10, 8453, 42161]);
   // Detectors that vouch for a token rather than warn about it
   const POSITIVE_DETECTORS = new Set(["HIGH_REPUTATION_TOKEN"]);
   const tokenRiskCache = new Map(); // `${chainId}:${address}` -> Promise of the verdict
 
   function interceptaApi(message) {
-    if (!inExtension) return Promise.reject(new Error("Security checks need the XSwap extension"));
+    if (!inExtension) return Promise.reject(new Error("Security checks need the Plan B extension"));
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({ action: "intercepta", ...message }, (response) => {
         if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
@@ -399,14 +453,14 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Kickbacks: a tweet's author who verified as human with World ID earns a small fee on buys
-  // from their tweet. Uniswap takes it from the bought token and pays it out in the same swap.
+  // Creator registrations are retained for a future Flash fee-distribution layer. Flash
+  // integrator fees are configured at the integrator account level, not per-order recipient.
   // ---------------------------------------------------------------------------
   const KICKBACK_TTL_MS = 60 * 1000;
   const kickbackCache = new Map(); // handle -> { expires, request: Promise of { handle, wallet, bips } or null }
 
   function kickbacksApi(message) {
-    if (!inExtension) return Promise.reject(new Error("Kickbacks need the XSwap extension"));
+    if (!inExtension) return Promise.reject(new Error("Kickbacks need the Plan B extension"));
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({ action: "kickbacks", ...message }, (response) => {
         if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
@@ -454,7 +508,7 @@
   // Coming back from the World ID page: forget cached registrations so panels pick up the new one
   window.addEventListener("focus", () => {
     kickbackCache.clear();
-    document.querySelectorAll(`[${HOST_ATTR}]`).forEach((host) => host.dispatchEvent(new Event("xswap:kickback")));
+    document.querySelectorAll(`[${HOST_ATTR}]`).forEach((host) => host.dispatchEvent(new Event("plan-b:kickback")));
   });
 
   // ---------------------------------------------------------------------------
@@ -514,16 +568,18 @@
   }
 
   function tokenLogoHtml(symbol, className = "icon") {
-    const url = TOKEN_LOGOS.has(symbol) && assetUrl(`icons/tokens/${symbol}.png`);
+    const info = TOKEN_INFO[symbol] || { name: symbol, color: "#536471" };
+    const remoteUrl = info.imageUrl && /^https:\/\//.test(info.imageUrl) ? info.imageUrl : null;
+    const url = remoteUrl || (TOKEN_LOGOS.has(symbol) && assetUrl(`icons/tokens/${symbol}.png`));
     if (url) return `<img class="${className}" src="${url}" alt="">`;
-    const info = TOKEN_INFO[symbol];
     const label = symbol === "ETH" ? "Ξ" : info.stable ? "$" : symbol.replace(/^cb/, "").slice(0, 1);
     return `<span class="${className}" style="background:${info.color}">${label}</span>`;
   }
 
   function chainLogoHtml(chainId, className = "chain-icon") {
-    const url = assetUrl(`icons/chains/${CHAINS[chainId].icon}.png`);
-    return url ? `<img class="${className}" src="${url}" alt="${CHAINS[chainId].name}">` : `<span class="${className}"></span>`;
+    const chain = CHAINS[chainId];
+    const url = chain.icon && assetUrl(`icons/chains/${chain.icon}.png`);
+    return url ? `<img class="${className}" src="${url}" alt="${chain.name}">` : `<span class="${className}" style="display:inline-flex;align-items:center;justify-content:center;background:#536471;color:white;font-size:9px;font-weight:700">${chain.name.slice(0, 1)}</span>`;
   }
 
   // ---------------------------------------------------------------------------
@@ -532,7 +588,7 @@
   function parseTickerLink(link) {
     const spans = [...link.querySelectorAll("span")].map((span) => ({ span, text: span.textContent.trim() }));
     const price = spans.find((s) => /^\$[\d,]+(\.\d+)?$/.test(s.text));
-    const symbol = spans.find((s) => /^[A-Za-z0-9]{2,10}$/.test(s.text) && s.text === s.text.toUpperCase());
+    const symbol = spans.find((s) => /^[A-Za-z0-9]{1,15}$/.test(s.text) && s.text === s.text.toUpperCase());
     const change = spans.find((s) => /^[+\-−][\d.,]+%$/.test(s.text));
     const name = spans.find((s) => s !== price && s !== symbol && s !== change && s.text && getComputedStyle(s.span).fontWeight >= 700);
     if (!price || !symbol || !link.querySelector("svg")) return null;
@@ -607,8 +663,8 @@
     }
     .chain-icon { width: 28px; height: 28px; border-radius: 8px; flex: none; object-fit: cover; }
   `;
-  // XSwap logo (images/logo.svg), inlined so it needs no web-accessible resource
-  const XSWAP_LOGO_SVG = `<svg class="logo" viewBox="0 0 128 128" aria-hidden="true"><rect width="128" height="128" rx="30" fill="#0b0b0c"/><g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="15"><path d="M36 36 L92 92" stroke="#fafaf9"/><path d="M36 92 L88 40" stroke="#0b0b0c" stroke-width="29"/><path d="M36 92 L90 38 M66 38 H90 V62" stroke="#00c230"/></g></svg>`;
+  // Plan B logo (images/logo.svg), inlined so it needs no web-accessible resource
+  const PLAN_B_LOGO_SVG = `<svg class="logo" viewBox="0 0 128 128" aria-hidden="true"><rect width="128" height="128" rx="30" fill="#0b0b0c"/><g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="15"><path d="M36 36 L92 92" stroke="#fafaf9"/><path d="M36 92 L88 40" stroke="#0b0b0c" stroke-width="29"/><path d="M36 92 L90 38 M66 38 H90 V62" stroke="#00c230"/></g></svg>`;
   const CHECK_SVG = `<svg class="check" viewBox="0 0 24 24"><path d="M9.64 18.952l-5.55-4.861 1.317-1.504 3.951 3.459 8.459-10.948L19.4 6.32 9.64 18.952z"/></svg>`;
 
   const dropdown = (() => {
@@ -627,7 +683,7 @@
     function open({ anchor, title, items, selected, themeVars, onSelect }) {
       close();
       host = document.createElement("div");
-      host.setAttribute("data-xswap-dropdown", "");
+      host.setAttribute("data-plan-b-dropdown", "");
       const root = host.attachShadow({ mode: "open" });
       root.innerHTML = `<style>${DROPDOWN_STYLE}</style><div class="menu" role="menu">
         ${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}
@@ -730,6 +786,19 @@
 
     /* Pay box on top, receive box below, with the switch button on the seam between them */
     .row { display: flex; flex-direction: column; gap: 4px; position: relative; }
+    .order-config { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .order-config label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .order-config label.wide { grid-column: 1 / -1; }
+    .order-config span { font-size: 12px; color: var(--muted); }
+    .order-config select, .order-config input {
+      width: 100%; min-width: 0; height: 34px; padding: 0 10px;
+      font: inherit; font-size: 13px; color: var(--text); background: var(--surface);
+      border: 1px solid var(--border); border-radius: 9px; outline: none;
+    }
+    .order-config select:focus, .order-config input:focus { border-color: var(--accent); }
+    .order-config .checkline { grid-column: 1 / -1; flex-direction: row; align-items: center; cursor: pointer; }
+    .order-config .checkline input { width: 16px; height: 16px; padding: 0; }
+    @container (max-width: 380px) { .order-config { grid-template-columns: 1fr; } .order-config label.wide, .order-config .checkline { grid-column: 1; } }
     .box {
       min-width: 0;
       background: var(--surface);
@@ -898,10 +967,22 @@
       side: "buy",
       quoteToken: "USDC",
       amount: "",
-      quote: null, // { amountOut, priceImpact, gasFeeUSD, estimated, error }
+      quote: null, // { amountOut, priceImpact, feeUSD, raw, estimated, error }
       quoting: false,
       balance: null,
       busy: false,
+      orderType: "market",
+      limitPrice: "",
+      triggerPrice: "",
+      triggerDirection: "upper",
+      durationSeconds: "1800",
+      bucketCount: "12",
+      trailPercent: "5",
+      activationPrice: "",
+      attachBracket: false,
+      stopPrice: "",
+      targetPrice: "",
+      orderId: null,
       security: null, // Intercepta verdict on the card's token: { loading } | { action, reasons } | { error } | { native }
       kickback: null, // the tweet author's registration: { handle, wallet, bips }, or null if they haven't verified
     };
@@ -942,15 +1023,39 @@
                   <span class="sub get-usd">$0.00</span>
                 </div>
               </div>
+              <div class="order-config">
+                <label class="wide"><span>Flash order type</span><select class="order-type">
+                  <option value="market">Market</option>
+                  <option value="limit">Limit</option>
+                  <option value="twap">TWAP</option>
+                  <option value="dca">DCA (scheduled TWAP)</option>
+                  <option value="stop">Stop</option>
+                  <option value="stop-loss">Stop loss</option>
+                  <option value="take-profit">Take profit</option>
+                  <option value="bracket">Bracket (position exit)</option>
+                  <option value="trailing-stop">Trailing stop</option>
+                  <option value="trailing-stop-limit">Trailing stop limit</option>
+                </select></label>
+                <label class="limit-field" hidden><span>Limit price (USD)</span><input class="limit-price" inputmode="decimal" placeholder="0.00"></label>
+                <label class="trigger-field" hidden><span>Trigger price (USD)</span><input class="trigger-price" inputmode="decimal" placeholder="0.00"></label>
+                <label class="trigger-direction-field" hidden><span>Trigger direction</span><select class="trigger-direction"><option value="upper">Price rises above</option><option value="lower">Price falls below</option></select></label>
+                <label class="duration-field" hidden><span>Duration (seconds)</span><input class="duration" inputmode="numeric" value="1800"></label>
+                <label class="buckets-field" hidden><span>TWAP buckets</span><input class="buckets" inputmode="numeric" value="12"></label>
+                <label class="trail-field" hidden><span>Trail distance (%)</span><input class="trail" inputmode="decimal" value="5"></label>
+                <label class="activation-field" hidden><span>Activation price (optional)</span><input class="activation" inputmode="decimal" placeholder="Immediate"></label>
+                <label class="checkline bracket-toggle"><input class="attach-bracket" type="checkbox"><span>Add take-profit + stop-loss</span></label>
+                <label class="stop-field" hidden><span>Stop price (USD)</span><input class="stop-price" inputmode="decimal" placeholder="0.00"></label>
+                <label class="target-field" hidden><span>Target price (USD)</span><input class="target-price" inputmode="decimal" placeholder="0.00"></label>
+              </div>
               <div class="meta">
                 <div class="details"></div>
-                <span class="via">via ${tokenLogoHtml("UNI", "uni")}<b>Uniswap</b></span>
+                <span class="via"><b>Definitive Flash</b></span>
               </div>
               <div class="security" hidden></div>
               <div class="kickback" hidden></div>
               <button class="cta"></button>
               <div class="status" hidden></div>
-              <div class="powered">Powered by ${XSWAP_LOGO_SVG}<b>XSwap</b></div>
+              <div class="powered">Powered by ${PLAN_B_LOGO_SVG}<b>Plan B</b></div>
             </div>
           </div>
         </div>
@@ -964,7 +1069,7 @@
 
     // Buy button inside the card: appended to X's flex row, so the sparkline shrinks to make room
     const triggerHost = document.createElement("span");
-    triggerHost.setAttribute("data-xswap-ticker-trigger", "");
+    triggerHost.setAttribute("data-plan-b-ticker-trigger", "");
     triggerHost.style.cssText = "display:flex;align-items:center;flex:none;padding:0 12px 0 8px;";
     const triggerRoot = triggerHost.attachShadow({ mode: "open" });
     triggerRoot.innerHTML = `<style>${TRIGGER_STYLE}</style><button class="toggle" aria-expanded="false"></button>`;
@@ -983,7 +1088,7 @@
     function payToken() { return state.side === "buy" ? state.quoteToken : mainToken(); }
     function getToken() { return state.side === "buy" ? mainToken() : state.quoteToken; }
     function decimalsOf(symbol) { return tokenOn(state.chainId, symbol).decimals; }
-    function walletOnChain() { return !!wallet.account && wallet.chainId === state.chainId; }
+    function walletOnChain() { return isSolana(state.chainId) ? !!wallet.solanaAccount : !!wallet.account && wallet.chainId === state.chainId; }
     // The author's profile picture (full size), shown on the World ID page
     function authorAvatar() {
       const img = article.querySelector('[data-testid="Tweet-User-Avatar"] img');
@@ -1010,12 +1115,68 @@
     }
     // USD price for display: stables are $1, the card's token uses the card price
     function usdPrice(symbol) {
-      if (TOKEN_INFO[symbol].stable) return 1;
+      if (TOKEN_INFO[symbol] && TOKEN_INFO[symbol].stable) return 1;
       if (symbol === mainToken()) return tickerPrice();
-      return null;
+      return TOKEN_INFO[symbol] && TOKEN_INFO[symbol].price || null;
     }
     function amountIn() {
       return parseFloat(state.amount) > 0 ? parseUnits(state.amount, decimalsOf(payToken())) : 0n;
+    }
+
+    function positive(value) { return isFinite(Number(value)) && Number(value) > 0; }
+
+    function orderConfigError() {
+      if (state.orderType === "limit" && !positive(state.limitPrice)) return "Enter a limit price";
+      if (["stop", "stop-loss", "take-profit"].includes(state.orderType) && !positive(state.triggerPrice)) return "Enter a trigger price";
+      if (["twap", "dca"].includes(state.orderType) && Number(state.durationSeconds) < 300) return "Duration must be at least 300 seconds";
+      if (["twap", "dca"].includes(state.orderType) && (Number(state.bucketCount) < 2 || Number(state.bucketCount) > 2560)) return "Buckets must be between 2 and 2560";
+      if (["trailing-stop", "trailing-stop-limit"].includes(state.orderType) && (Number(state.trailPercent) < 0.5 || Number(state.trailPercent) > 50)) return "Trail distance must be between 0.5% and 50%";
+      if ((state.orderType === "bracket" || state.attachBracket) && (!positive(state.stopPrice) || !positive(state.targetPrice))) return "Enter both stop and target prices";
+      return "";
+    }
+
+    function flashQuoteRequest(funderAddress) {
+      const chainName = chain().flash;
+      const request = {
+        targetChain: chainName,
+        contraChain: chainName,
+        targetAsset: tokenOn(state.chainId, mainToken()).address,
+        contraAsset: tokenOn(state.chainId, state.quoteToken).address,
+        side: state.side,
+        qty: state.amount,
+        orderType: state.orderType === "dca" ? "twap" : state.orderType,
+        maxSlippage: "0.01",
+        maxPriceImpact: "0.05",
+      };
+      if (funderAddress) request.funderAddress = funderAddress;
+      if (isSolana(state.chainId) && payToken().toUpperCase() === "SOL") request.svmUseNativeSOL = true;
+      if (state.orderType === "limit") request.limitNotionalPrice = state.limitPrice;
+      if (["twap", "dca"].includes(state.orderType)) {
+        request.durationSeconds = Number(state.durationSeconds);
+        request.twapBucketCount = Number(state.bucketCount);
+      }
+      if (["stop", "stop-loss", "take-profit"].includes(state.orderType)) {
+        const triggerType = state.orderType === "stop-loss" ? "lower" : state.orderType === "take-profit" ? "upper" : state.triggerDirection;
+        request.triggers = [{ notionalPrice: state.triggerPrice, triggerType }];
+        if (positive(state.limitPrice)) request.limitNotionalPrice = state.limitPrice;
+      }
+      if (state.orderType === "bracket") {
+        request.triggers = [
+          { notionalPrice: state.stopPrice, triggerType: "lower" },
+          { notionalPrice: state.targetPrice, triggerType: "upper" },
+        ];
+      }
+      if (["trailing-stop", "trailing-stop-limit"].includes(state.orderType)) {
+        request.trailingStop = { trailPercent: String(Number(state.trailPercent) / 100) };
+        if (positive(state.activationPrice)) request.trailingStop.activationPrice = state.activationPrice;
+      }
+      if (["market", "limit", "twap", "dca"].includes(state.orderType) && state.attachBracket) {
+        request.attachedBracket = {
+          stopLoss: { notionalPrice: state.stopPrice },
+          takeProfit: { notionalPrice: state.targetPrice },
+        };
+      }
+      return request;
     }
 
     let statusTimer = null;
@@ -1049,17 +1210,37 @@
 
       // Wallet button
       const walletButton = $(".wallet");
-      walletButton.classList.toggle("connected", !!wallet.account);
+      const activeAccount = accountFor(state.chainId);
+      walletButton.classList.toggle("connected", !!activeAccount);
       walletButton.disabled = state.busy;
-      if (wallet.account) {
+      if (activeAccount) {
         walletButton.title = `Network: ${chain().name}`;
-        walletButton.innerHTML = `${chainLogoHtml(state.chainId)}<span>${shortAddress(wallet.account)}</span>${walletOnChain() ? "" : '<span class="dot" title="Wallet is on another network"></span>'}${CARET_SVG}`;
+        walletButton.innerHTML = `${chainLogoHtml(state.chainId)}<span>${shortAddress(activeAccount)}</span>${walletOnChain() ? "" : '<span class="dot" title="Wallet is on another network"></span>'}${CARET_SVG}`;
       } else {
         walletButton.title = "";
         walletButton.innerHTML = "Connect wallet";
       }
 
       root.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("on", b.dataset.side === state.side));
+      $(".order-type").value = state.orderType;
+      $(".trigger-direction").value = state.triggerDirection;
+      const triggerOrder = ["stop", "stop-loss", "take-profit"].includes(state.orderType);
+      const trailingOrder = ["trailing-stop", "trailing-stop-limit"].includes(state.orderType);
+      const standaloneBracket = state.orderType === "bracket";
+      const exitOnly = ["stop-loss", "take-profit", "bracket"].includes(state.orderType);
+      const bracketAllowed = ["market", "limit", "twap", "dca"].includes(state.orderType);
+      $(".limit-field").hidden = state.orderType !== "limit" && !triggerOrder;
+      $(".trigger-field").hidden = !triggerOrder;
+      $(".trigger-direction-field").hidden = !triggerOrder || ["stop-loss", "take-profit"].includes(state.orderType);
+      $(".duration-field").hidden = !["twap", "dca"].includes(state.orderType);
+      $(".buckets-field").hidden = !["twap", "dca"].includes(state.orderType);
+      $(".trail-field").hidden = !trailingOrder;
+      $(".activation-field").hidden = !trailingOrder;
+      $(".bracket-toggle").hidden = !bracketAllowed;
+      $(".attach-bracket").checked = state.attachBracket;
+      $(".stop-field").hidden = !standaloneBracket && !(bracketAllowed && state.attachBracket);
+      $(".target-field").hidden = !standaloneBracket && !(bracketAllowed && state.attachBracket);
+      root.querySelector('[data-side="buy"]').disabled = exitOnly;
       const canPickToken = quoteTokens().length > 1;
       $(".pay-token").innerHTML = chipHtml(payToken(), state.side === "buy" && canPickToken);
       $(".get-token").innerHTML = chipHtml(getToken(), state.side === "sell" && canPickToken);
@@ -1089,9 +1270,9 @@
       if (state.quote && !state.quote.estimated && received > 0) {
         const rate = state.side === "buy" ? payAmount / received : received / payAmount;
         parts.push(`1 ${escapeHtml(mainToken())} = ${formatAmount(rate)} ${escapeHtml(state.quoteToken)}`);
-        if (state.quote.gasFeeUSD) parts.push(`Fee ${formatUsd(parseFloat(state.quote.gasFeeUSD))}`);
-        if (typeof state.quote.priceImpact === "number") {
-          const impact = state.quote.priceImpact;
+        if (state.quote.feeUSD) parts.push(`Fee ${formatUsd(parseFloat(state.quote.feeUSD))}`);
+        if (state.quote.priceImpact !== null && state.quote.priceImpact !== undefined) {
+          const impact = Number(state.quote.priceImpact) * 100;
           parts.push(`<span class="${impact > 2 ? "warn" : ""}">Impact ${impact < 0.01 ? "<0.01" : impact.toFixed(2)}%</span>`);
         }
       } else if (state.quote && state.quote.error) {
@@ -1107,12 +1288,13 @@
       // Main button
       const cta = $(".cta");
       const insufficient = state.balance !== null && amountIn() > state.balance;
+      const configError = orderConfigError();
       if (state.busy) {
         cta.disabled = true;
       } else if (buyBlocked()) {
         cta.textContent = `${mainToken()} flagged as unsafe`;
         cta.disabled = true;
-      } else if (!wallet.account) {
+      } else if (!activeAccount) {
         cta.textContent = "Connect wallet";
         cta.disabled = false;
       } else if (!walletOnChain()) {
@@ -1121,11 +1303,14 @@
       } else if (!(payAmount > 0)) {
         cta.textContent = "Enter an amount";
         cta.disabled = true;
+      } else if (configError) {
+        cta.textContent = configError;
+        cta.disabled = true;
       } else if (insufficient) {
         cta.textContent = `Not enough ${payToken()}`;
         cta.disabled = true;
       } else {
-        cta.textContent = `${state.side === "buy" ? "Buy" : "Sell"} ${mainToken()}`;
+        cta.textContent = `${state.orderType === "market" ? "Trade" : "Place"} ${state.orderType.replaceAll("-", " ")} order`;
         cta.disabled = !state.quote || state.quote.amountOut === null || state.quoting || !!state.quote.estimated;
       }
     }
@@ -1161,25 +1346,9 @@
 
     function renderKickback(received) {
       const row = $(".kickback");
-      const kickback = activeKickback();
-      const pct = (bips) => `${bips / 100}%`;
-      row.hidden = !kickback;
-      if (kickback) {
-        const share = state.quote && state.quote.kickbackOut ? unitsToNumber(state.quote.kickbackOut, decimalsOf(getToken())) : 0;
-        row.innerHTML = `${WORLD_ID_SVG}<span><b>${pct(kickback.bips)}${share > 0 && received > 0 ? ` (~${formatAmount(share)} ${escapeHtml(getToken())})` : ""} to @${escapeHtml(kickback.handle)}</b> · verified human with World ID</span>`;
-      }
-
-      // The author's own tweet: invite them to verify, or confirm they're earning
+      row.hidden = true;
       const owner = $(".owner");
-      owner.hidden = !isOwnTweet();
-      if (owner.hidden) return;
-      // render runs on every price tick: only rebuild when the registration changes, so the button stays clickable
-      const ownerKey = state.kickback ? `earning:${state.kickback.bips}` : "verify";
-      if (owner.dataset.state === ownerKey) return;
-      owner.dataset.state = ownerKey;
-      owner.innerHTML = state.kickback
-        ? `${WORLD_ID_SVG}<span class="copy">Verified human · you earn <b>${pct(state.kickback.bips)}</b> when others buy from this tweet</span>`
-        : `<span class="copy">Earn a kickback on <b>$${escapeHtml(ticker.symbol)}</b> buys</span><button class="earn">${WORLD_ID_SVG}Verify with World ID</button>`;
+      owner.hidden = true;
     }
 
     function loadKickback() {
@@ -1189,14 +1358,21 @@
         state.kickback = kickback;
         if (changed && !state.busy) scheduleQuote(); // the fee changes the quote
         else render();
-      }, (error) => console.warn("[XSwap] Kickback lookup failed:", error.message));
+      }, (error) => console.warn("[Plan B] Kickback lookup failed:", error.message));
     }
 
     function checkSecurity() {
       const chainId = state.chainId;
-      // Native ETH has no contract to scan, so it's checked as WETH
       const token = tokenOn(chainId, mainToken());
-      const scanned = token.address === NATIVE ? tokenOn(chainId, "WETH") : token;
+      if (isSolana(chainId)) {
+        state.security = token && token.riskFlagged
+          ? { action: "warn", reasons: ["Flash flagged this asset for elevated risk indicators"] }
+          : { native: true };
+        render();
+        return;
+      }
+      // Native assets have no contract to scan, so use wrapped native when available.
+      const scanned = isNativeAddress(token.address) ? tokenOn(chainId, "WETH") : token;
       if (!scanned) {
         state.security = { native: true };
         render();
@@ -1239,7 +1415,7 @@
       try {
         scan = await scanTransaction(chainId, tx);
       } catch (error) {
-        console.warn("[XSwap] Intercepta transaction check failed:", error.message);
+        console.warn("[Plan B] Intercepta transaction check failed:", error.message);
       }
       if (scan && scan.reasons.length) await confirmRisk(scan.reasons);
       return { scan, send: () => sendTransaction(tx) };
@@ -1250,8 +1426,7 @@
       const payPrice = usdPrice(payToken());
       const getPrice = usdPrice(getToken());
       if (payPrice === null || getPrice === null) return null;
-      const kickback = activeKickback();
-      const out = (parseFloat(state.amount) * payPrice * (1 - (kickback ? kickback.bips : 0) / 10000)) / getPrice;
+      const out = (parseFloat(state.amount) * payPrice) / getPrice;
       const decimals = decimalsOf(getToken());
       return parseUnits(out.toFixed(Math.min(decimals, 12)), decimals);
     }
@@ -1259,7 +1434,7 @@
     function scheduleQuote() {
       clearTimeout(quoteTimer);
       const seq = ++quoteSeq;
-      if (!(amountIn() > 0n)) {
+      if (!(amountIn() > 0n) || orderConfigError()) {
         state.quote = null;
         state.quoting = false;
         render();
@@ -1269,14 +1444,13 @@
       render();
       quoteTimer = setTimeout(async () => {
         try {
-          const request = quoteRequest(state.chainId, payToken(), getToken(), amountIn().toString(), wallet.account || PREVIEW_SWAPPER, activeKickback());
-          const response = await uniswapApi("quote", request);
+          const response = await flashApi("quote", flashQuoteRequest(accountFor(state.chainId) || undefined));
           if (seq !== quoteSeq) return;
-          const quote = response.quote || {};
           state.quote = {
-            ...quoteOutputs(quote),
-            priceImpact: quote.priceImpact,
-            gasFeeUSD: quote.gasFeeUSD,
+            amountOut: response.to && positive(response.to.amount) ? parseUnits(response.to.amount, decimalsOf(getToken())) : null,
+            priceImpact: response.estimatedPriceImpact,
+            feeUSD: response.fees && response.fees.estimatedFeeNotional,
+            raw: response,
             estimated: false,
           };
         } catch (error) {
@@ -1298,7 +1472,16 @@
       const chainId = state.chainId;
       const symbol = payToken();
       try {
-        const balance = await tokenBalance(chainId, symbol);
+        let balance;
+        if (isSolana(chainId)) {
+          const response = await flashApi("balances", { address: wallet.solanaAccount }, "GET");
+          const wanted = tokenOn(chainId, symbol).address;
+          const rows = (response.balances || []).filter((item) => item.chain === chain().flash && item.address === wanted);
+          const row = symbol.toUpperCase() === "SOL" ? rows.find((item) => item.isNative) || rows[0] : rows[0];
+          balance = parseUnits(row ? row.balance : "0", decimalsOf(symbol));
+        } else {
+          balance = await tokenBalance(chainId, symbol);
+        }
         if (chainId === state.chainId && symbol === payToken()) state.balance = balance;
       } catch {
         state.balance = null;
@@ -1309,11 +1492,14 @@
     // --- actions -------------------------------------------------------------
     // Switching sides keeps the trade the same size: what you'd receive becomes what you pay
     function setSide(side) {
+      if (["stop-loss", "take-profit", "bracket"].includes(state.orderType) && side !== "sell") return;
       if (side === state.side) return;
       // A quote still loading belongs to an older amount, so estimate from the card price instead
       const out = !state.quoting && state.quote && state.quote.amountOut !== null ? state.quote.amountOut : (amountIn() > 0n ? estimateQuote() : null);
       const outDecimals = decimalsOf(getToken());
       state.side = side;
+      if (["stop", "stop-loss"].includes(state.orderType)) state.triggerDirection = side === "buy" ? "upper" : "lower";
+      if (state.orderType === "take-profit") state.triggerDirection = side === "buy" ? "lower" : "upper";
       state.amount = out ? unitsToInput(out, outDecimals) : "";
       input.value = state.amount;
       state.balance = null;
@@ -1351,7 +1537,7 @@
         anchor,
         themeVars,
         selected: state.quoteToken,
-        items: quoteTokens().map((symbol) => ({ id: symbol, iconHtml: tokenLogoHtml(symbol), title: symbol, subtitle: TOKEN_INFO[symbol].name })),
+        items: quoteTokens().map((symbol) => ({ id: symbol, iconHtml: tokenLogoHtml(symbol), title: symbol, subtitle: (TOKEN_INFO[symbol] || {}).name || symbol })),
         onSelect: (symbol) => {
           if (symbol === state.quoteToken) return;
           state.quoteToken = symbol;
@@ -1379,7 +1565,7 @@
           };
         }),
         onSelect: async (id) => {
-          const chainId = Number(id);
+          const chainId = id === "solana" ? id : Number(id);
           setChain(chainId);
           try {
             await ensureChain(chainId);
@@ -1392,68 +1578,139 @@
       });
     }
 
-    async function executeSwap() {
+    async function sendSetupAction(tx, label, step) {
+      const action = { to: tx.to, data: tx.data, value: tx.value || "0" };
+      const { send } = await guardedSend(state.chainId, action, step);
+      step(`${label} in wallet…`);
+      const hash = await send();
+      await waitForReceipt(hash);
+      return hash;
+    }
+
+    async function freshFlashQuote(step) {
+      const funder = accountFor(state.chainId);
+      let quote = await flashApi("quote", flashQuoteRequest(funder));
+      if (isSolana(state.chainId)) {
+        for (const setupTx of quote.setupTxs || []) {
+          step("Sign Solana setup…");
+          const signedSetupTx = await walletRequest("solana_sign_transaction", [setupTx]);
+          step("Confirming Solana setup…");
+          await flashApi("setup-transaction", { signedSetupTx });
+        }
+        if ((quote.setupTxs || []).length) quote = await flashApi("quote", flashQuoteRequest(funder));
+        return quote;
+      }
+      const actions = [];
+      if (quote.wrap && quote.wrap.evmTx) actions.push([quote.wrap.evmTx, `Wrap ${payToken()}`]);
+      if (quote.evm && quote.evm.approveTx) actions.push([quote.evm.approveTx, `Approve ${payToken()}`]);
+      if (quote.attachedBracket && quote.attachedBracket.evm && quote.attachedBracket.evm.approveTx) {
+        actions.push([quote.attachedBracket.evm.approveTx, `Approve ${getToken()} for bracket exits`]);
+      }
+      for (const [tx, label] of actions) await sendSetupAction(tx, label, step);
+      if (actions.length) quote = await flashApi("quote", flashQuoteRequest(wallet.account));
+      if (quote.setupTxs && quote.setupTxs.length && !(quote.evm && quote.evm.orderTypedData)) {
+        throw new Error("Flash returned setup transactions that this wallet cannot sign. Refresh the quote or use an EOA wallet with transaction signing enabled.");
+      }
+      return quote;
+    }
+
+    async function signFlashOrder(quote, step) {
+      if (isSolana(state.chainId)) {
+        if (!quote.svm || !quote.svm.orderMessage) throw new Error("Flash did not return Solana order signing data");
+        step("Sign Flash order…");
+        const userSignature = await walletRequest("solana_sign_message", [quote.svm.orderMessage]);
+        let sponsoredDelegateTx;
+        if (quote.svm.sponsoredDelegateTx) {
+          step("Sign sponsored token delegation…");
+          sponsoredDelegateTx = await walletRequest("solana_sign_transaction", [quote.svm.sponsoredDelegateTx]);
+        }
+        return { userSignature, sponsoredDelegateTx };
+      }
+      if (!quote.evm || !quote.evm.orderTypedData) throw new Error("Flash did not return EVM order signing data");
+      let permitSignature;
+      if (quote.evm.permitTypedData) {
+        step("Sign token permit…");
+        permitSignature = await walletRequest("eth_signTypedData_v4", [wallet.account, typedDataPayload(quote.evm.permitTypedData)]);
+      }
+      step("Sign Flash order…");
+      const userSignature = await walletRequest("eth_signTypedData_v4", [wallet.account, typedDataPayload(quote.evm.orderTypedData)]);
+      return { userSignature, permitSignature };
+    }
+
+    async function executeOrder() {
       const chainId = state.chainId;
-      const tokenIn = payToken();
-      const tokenOut = getToken();
-      const amount = amountIn().toString();
       const explorer = CHAINS[chainId];
-      const kickback = activeKickback();
       const step = (text) => { $(".cta").textContent = text; };
 
       state.busy = true;
       render();
       try {
-        // 1. Permit2 approval for ERC-20 input (one-time per token)
-        if (tokenOn(chainId, tokenIn).address !== NATIVE) {
-          step("Checking approval…");
-          const approval = await uniswapApi("check_approval", {
-            walletAddress: wallet.account, token: tokenOn(chainId, tokenIn).address, amount, chainId,
-          });
-          if (approval.cancel) {
-            const { send } = await guardedSend(chainId, approval.cancel, step);
-            step("Reset approval in wallet…");
-            await waitForReceipt(await send());
-          }
-          if (approval.approval) {
-            const { send } = await guardedSend(chainId, approval.approval, step);
-            step(`Approve ${tokenIn} in wallet…`);
-            setStatus(`One-time approval so Uniswap can use your ${escapeHtml(tokenIn)}.`);
-            await waitForReceipt(await send());
+        step("Getting Flash quote…");
+        const quote = await freshFlashQuote(step);
+        const signatures = await signFlashOrder(quote, step);
+        const funder = accountFor(chainId);
+        const submit = {
+          ...flashQuoteRequest(funder),
+          quoteId: quote.quoteId,
+          userSignature: signatures.userSignature,
+        };
+        // These fields shape the quote/setup phase only and are not part of
+        // SubmitOrderRequest. The signed quote already binds their result.
+        delete submit.durationSeconds;
+        delete submit.svmUseNativeSOL;
+        if (isSolana(chainId)) {
+          submit.svmNonce = quote.svm.nonce;
+          submit.svmDeadline = quote.svm.deadline;
+          if (signatures.sponsoredDelegateTx) submit.svmSponsoredDelegateTx = signatures.sponsoredDelegateTx;
+        } else {
+          submit.evmOrderTypedData = quote.evm.orderTypedData;
+        }
+        if (quote.bridgeQuoteId) submit.bridgeQuoteId = quote.bridgeQuoteId;
+        if (quote.evm && quote.evm.permitTypedData) {
+          submit.evmPermitTypedData = quote.evm.permitTypedData;
+          submit.evmPermitSignature = signatures.permitSignature;
+        }
+        if (quote.attachedBracket) {
+          const bracket = quote.attachedBracket;
+          const signingData = isSolana(chainId) ? bracket.svm : bracket.evm;
+          if (!signingData || !(signingData.orderMessage || signingData.orderTypedData)) throw new Error("Flash did not return bracket signing data");
+          step("Sign bracket exits…");
+          const bracketSignature = isSolana(chainId)
+            ? await walletRequest("solana_sign_message", [signingData.orderMessage])
+            : await walletRequest("eth_signTypedData_v4", [wallet.account, typedDataPayload(signingData.orderTypedData)]);
+          submit.attachedBracket = {
+            ...submit.attachedBracket,
+            userSignature: bracketSignature,
+            deadline: bracket.deadline,
+            signedMaxFromAmount: bracket.signedMaxFromAmount,
+          };
+          if (isSolana(chainId)) submit.attachedBracket.svmNonce = bracket.svm.nonce;
+          else submit.attachedBracket.salt = bracket.salt;
+          if (bracket.evm && bracket.evm.permitTypedData) {
+            step("Sign bracket permit…");
+            submit.attachedBracket.evmPermitTypedData = bracket.evm.permitTypedData;
+            submit.attachedBracket.evmPermitSignature = await walletRequest("eth_signTypedData_v4", [wallet.account, typedDataPayload(bracket.evm.permitTypedData)]);
           }
         }
 
-        // 2. Fresh quote for the connected wallet
-        step("Getting quote…");
-        const quoteResponse = await uniswapApi("quote", quoteRequest(chainId, tokenIn, tokenOut, amount, wallet.account, kickback));
-
-        // 3. Permit2 signature, if the quote needs one
-        let signature;
-        if (quoteResponse.permitData) {
-          step("Sign permit in wallet…");
-          setStatus("Sign the Permit2 message (free, no transaction).");
-          signature = await walletRequest("eth_signTypedData_v4", [wallet.account, typedDataFromPermit(quoteResponse.permitData)]);
+        step("Submitting order…");
+        const placed = await flashApi("order", submit);
+        state.orderId = placed.orderId;
+        let statusText = "submitted";
+        let txLink = "";
+        if (state.orderType === "market") {
+          step("Waiting for fill…");
+          for (let attempt = 0; attempt < 30; attempt++) {
+            const detail = await flashApi("order-detail", { orderId: placed.orderId, funderAddress: funder }, "GET");
+            const order = detail.order || {};
+            statusText = String(order.status || "submitted").replace(/^ORDER_STATUS_/, "").toLowerCase().replaceAll("_", " ");
+            const fill = detail.fills && detail.fills.at(-1);
+            if (fill && fill.transactionId && explorer.explorer) txLink = ` · <a href="${explorer.explorer}/tx/${fill.transactionId}" target="_blank" rel="noopener">View on ${explorer.explorerName}</a>`;
+            if (["ORDER_STATUS_FILLED", "ORDER_STATUS_CANCELLED", "ORDER_STATUS_REJECTED", "ORDER_STATUS_TERMINATED"].includes(order.status)) break;
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+          }
         }
-
-        // 4. Build the swap transaction, simulate it with Intercepta, then send it
-        setStatus("");
-        const swapRequest = { quote: quoteResponse.quote };
-        if (quoteResponse.permitData) Object.assign(swapRequest, { signature, permitData: quoteResponse.permitData });
-        const { swap } = await uniswapApi("swap", swapRequest);
-        const { scan, send } = await guardedSend(chainId, swap, step);
-        step("Confirm swap in wallet…");
-        const simulated = scan && scan.receive.find((asset) => asset.symbol && asset.amount);
-        if (simulated) setStatus(`${INTERCEPTA_MARK_SVG} Simulated by Intercepta: you receive ~${formatAmount(parseFloat(simulated.amount))} ${escapeHtml(simulated.symbol)}`);
-        const hash = await send();
-
-        step("Swapping…");
-        const txLink = `<a href="${explorer.explorer}/tx/${hash}" target="_blank" rel="noopener">View on ${explorer.explorerName}</a>`;
-        setStatus(`Transaction sent · ${txLink}`);
-        await waitForReceipt(hash);
-
-        const received = unitsToNumber(quoteOutputs(quoteResponse.quote).amountOut, tokenOn(chainId, tokenOut).decimals);
-        const kickbackNote = kickback ? ` · ${kickback.bips / 100}% to @${escapeHtml(kickback.handle)}` : "";
-        setStatus(`✓ ${state.side === "buy" ? "Bought" : "Sold"} · ~${formatAmount(received)} ${escapeHtml(tokenOut)} received${kickbackNote} · ${txLink}`, "ok", 5000);
+        setStatus(`✓ Flash order ${escapeHtml(statusText)} · <b>${escapeHtml(placed.orderId)}</b>${txLink}`, "ok");
         state.amount = "";
         input.value = "";
         state.quote = null;
@@ -1470,9 +1727,9 @@
 
     async function connect() {
       setStatus("Check your wallet to connect…");
-      await connectWallet();
+      await connectWallet(state.chainId);
       setStatus("");
-      if (availableChains.includes(wallet.chainId)) setChain(wallet.chainId);
+      if (!isSolana(state.chainId) && availableChains.includes(wallet.chainId)) setChain(wallet.chainId);
       else await ensureChain(state.chainId);
       scheduleQuote(); // re-quote for the connected wallet
       refreshBalance();
@@ -1480,9 +1737,9 @@
 
     async function onCta() {
       try {
-        if (!wallet.account) await connect();
+        if (!accountFor(state.chainId)) await connect();
         else if (!walletOnChain()) await ensureChain(state.chainId);
-        else await executeSwap();
+        else await executeOrder();
       } catch (error) {
         const rejected = error.code === 4001 || /reject|denied/i.test(error.message);
         setStatus(rejected ? "Cancelled in wallet." : escapeHtml(error.message), rejected ? "" : "error");
@@ -1512,7 +1769,7 @@
       if (state.busy) return;
       const walletButton = target.closest(".wallet");
       if (walletButton) {
-        if (!wallet.account) onCta();
+        if (!accountFor(state.chainId)) onCta();
         else toggleMenu(() => openNetworkMenu(walletButton));
         return;
       }
@@ -1522,7 +1779,7 @@
       if (target.closest(".balance") && state.balance !== null) {
         event.preventDefault();
         let max = state.balance;
-        if (tokenOn(state.chainId, payToken()).address === NATIVE) max = max > chain().gasReserveWei ? max - chain().gasReserveWei : 0n;
+        if (!isSolana(state.chainId) && isNativeAddress(tokenOn(state.chainId, payToken()).address)) max = max > chain().gasReserveWei ? max - chain().gasReserveWei : 0n;
         state.amount = unitsToInput(max, decimalsOf(payToken()));
         input.value = state.amount;
         scheduleQuote();
@@ -1561,11 +1818,44 @@
       scheduleQuote();
     });
 
+    root.addEventListener("change", (event) => {
+      const target = event.target;
+      if (target.matches(".order-type")) {
+        state.orderType = target.value;
+        if (["stop-loss", "take-profit", "bracket"].includes(state.orderType) && state.side !== "sell") setSide("sell");
+        if (!["market", "limit", "twap", "dca"].includes(state.orderType)) state.attachBracket = false;
+        if (["stop", "stop-loss"].includes(state.orderType)) state.triggerDirection = state.side === "buy" ? "upper" : "lower";
+        if (state.orderType === "take-profit") state.triggerDirection = state.side === "buy" ? "lower" : "upper";
+      } else if (target.matches(".trigger-direction")) {
+        state.triggerDirection = target.value;
+      } else if (target.matches(".attach-bracket")) {
+        state.attachBracket = target.checked;
+      } else {
+        return;
+      }
+      setStatus("");
+      scheduleQuote();
+      render();
+    });
+
+    root.addEventListener("input", (event) => {
+      const fields = new Map([
+        ["limit-price", "limitPrice"], ["trigger-price", "triggerPrice"], ["duration", "durationSeconds"],
+        ["buckets", "bucketCount"], ["trail", "trailPercent"], ["activation", "activationPrice"],
+        ["stop-price", "stopPrice"], ["target-price", "targetPrice"],
+      ]);
+      const className = [...fields.keys()].find((name) => event.target.classList && event.target.classList.contains(name));
+      if (!className) return;
+      state[fields.get(className)] = event.target.value.trim();
+      setStatus("");
+      scheduleQuote();
+      render();
+    });
+
     if (!quoteTokens().includes(state.quoteToken)) state.quoteToken = quoteTokens()[0];
 
-    host.addEventListener("xswap:wallet", () => { followWalletChain(); refreshBalance(); render(); });
-    host.addEventListener("xswap:kickback", loadKickback);
-    loadKickback();
+    host.addEventListener("plan-b:wallet", () => { followWalletChain(); refreshBalance(); render(); });
+    host.addEventListener("plan-b:kickback", loadKickback);
     checkSecurity(); // verdicts are cached per token (here and in the backend), so cards scrolling by stay cheap
     // Keep the card-price line current while no quote is shown
     new MutationObserver(() => { if (!state.quote && !state.busy) render(); }).observe(link, { childList: true, characterData: true, subtree: true });
@@ -1576,7 +1866,7 @@
   // ---------------------------------------------------------------------------
   // Finding ticker cards in the timeline (X re-renders tweets, so keep scanning)
   // ---------------------------------------------------------------------------
-  function attachToCard(article, list) {
+  async function attachToCard(article, list) {
     // The card container is the element wrapping X's ScrollSnap carousel <nav>
     const nav = list.closest("nav");
     const container = nav && nav.parentElement;
@@ -1587,10 +1877,13 @@
       return;
     }
 
-    for (const link of list.querySelectorAll('a[role="link"]')) {
+    if (container.dataset.planBResolving === "true") return;
+    container.dataset.planBResolving = "true";
+    try { for (const link of list.querySelectorAll('a[role="link"]')) {
       const ticker = parseTickerLink(link);
       if (!ticker) continue;
       ticker.symbol = ticker.symbol.toUpperCase();
+      try { await discoverTicker(ticker.symbol); } catch (error) { console.warn("[Plan B] Flash asset search failed:", error.message); }
       if (!chainsForTicker(ticker.symbol).length) continue;
 
       const host = createPanel(article, link, ticker);
@@ -1605,7 +1898,7 @@
       align();
       new ResizeObserver(align).observe(link);
       return; // One panel per card, for the first supported ticker
-    }
+    }} finally { delete container.dataset.planBResolving; }
   }
 
   function scan() {

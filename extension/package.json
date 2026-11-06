@@ -1,0 +1,13 @@
+{
+  "name": "plan-b-extension-assets",
+  "private": true,
+  "scripts": {
+    "build:solana": "esbuild solana-entry.js --bundle --format=iife --platform=browser --minify --outfile=vendor/solana-web3.bundle.js"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.4"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.11"
+  }
+}

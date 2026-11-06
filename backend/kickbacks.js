@@ -1,7 +1,8 @@
 // Kickbacks: people who tweet a ticker earn a small fee when others buy it from their tweet.
 // To earn, the tweet's author registers their X handle and a payout wallet, proving with
 // World ID that they're a unique human (so bots can't farm kickbacks with spam accounts).
-// The fee itself is charged by Uniswap (integratorFees on /quote), paid out in the bought token.
+// Flash integrator fees settle to the integrator's configured payout wallet. Dynamic creator
+// distribution is intentionally kept separate from order execution.
 require('dotenv').config({ path: __dirname + '/.env' })
 const fs = require('fs')
 const path = require('path')

@@ -8,7 +8,7 @@ Kickbacks pay tweet authors 0.5% of every buy made from their ticker card, so th
 2. The page asks the backend for an RP context (`POST /kickbacks/rp-context`), signed with the RP signing key that never leaves the server.
 3. IDKit builds a Proof of Human request whose signal is `handle:wallet`, and the page shows it as a QR code for World App (or the simulator in staging).
 4. The page sends the proof unmodified to `POST /kickbacks/register`. The backend checks the signal and action, verifies the proof with `developer.world.org/api/v4/verify`, checks the environment, and stores the nullifier with the handle and wallet.
-5. From then on, buys from that author's ticker cards include a 0.5% Uniswap integrator fee to their wallet.
+5. The verified registration can be used by a future creator-reward distribution layer; Flash integrator fees settle to the integrator's configured payout wallet.
 
 ## Alternative paths
 

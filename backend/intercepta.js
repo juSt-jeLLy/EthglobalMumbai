@@ -1,5 +1,5 @@
 // Proxy for the Intercepta (Web3 Antivirus) security API. Keeps the API key on the server,
-// like the Uniswap proxy, and caches token verdicts so every rendered card doesn't spend credits.
+// like the Flash proxy, and caches token verdicts so every rendered card doesn't spend credits.
 require('dotenv').config({ path: __dirname + '/.env' })
 
 const INTERCEPTA_API_URL = 'https://api.web3antivirus.io/api/public'

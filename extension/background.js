@@ -1,13 +1,15 @@
-// XSwap backend (backend/). Proxies the Uniswap Trading API so the API key stays server-side.
+// Plan B backend (backend/). Proxies Definitive Flash so the API key stays server-side.
 const BACKEND_URL = "http://localhost:8000";
 
 // Fetches run here (with host_permissions) to avoid the host page's CORS and CSP restrictions.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === "uniswap") {
-    fetch(`${BACKEND_URL}/uniswap/${message.endpoint}`, {
-      method: "POST",
+  if (message.action === "flash") {
+    const method = message.method || "POST";
+    const query = method === "GET" ? `?${new URLSearchParams(message.body || {})}` : "";
+    fetch(`${BACKEND_URL}/flash/${message.endpoint}${query}`, {
+      method,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(message.body),
+      ...(method !== "GET" && { body: JSON.stringify(message.body || {}) }),
     })
       .then(async (response) => {
         const text = await response.text();
@@ -15,7 +17,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         try { body = JSON.parse(text); } catch { body = { message: text }; }
         sendResponse({ ok: response.ok, status: response.status, body });
       })
-      .catch((error) => sendResponse({ ok: false, status: 0, body: { message: `XSwap backend not reachable at ${BACKEND_URL} (${error.message})` } }));
+      .catch((error) => sendResponse({ ok: false, status: 0, body: { message: `Plan B backend not reachable at ${BACKEND_URL} (${error.message})` } }));
     return true;
   }
 
@@ -35,7 +37,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         try { body = JSON.parse(text); } catch { body = { message: text }; }
         sendResponse({ ok: response.ok, status: response.status, body });
       })
-      .catch((error) => sendResponse({ ok: false, status: 0, body: { message: `XSwap backend not reachable at ${BACKEND_URL} (${error.message})` } }));
+      .catch((error) => sendResponse({ ok: false, status: 0, body: { message: `Plan B backend not reachable at ${BACKEND_URL} (${error.message})` } }));
     return true;
   }
 
@@ -55,7 +57,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         try { body = JSON.parse(text); } catch { body = { message: text }; }
         sendResponse({ ok: response.ok, status: response.status, body });
       })
-      .catch((error) => sendResponse({ ok: false, status: 0, body: { message: `XSwap backend not reachable at ${BACKEND_URL} (${error.message})` } }));
+      .catch((error) => sendResponse({ ok: false, status: 0, body: { message: `Plan B backend not reachable at ${BACKEND_URL} (${error.message})` } }));
     return true;
   }
 
