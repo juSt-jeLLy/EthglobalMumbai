@@ -6,6 +6,7 @@
   const tweet = document.querySelector("#caller-tweet");
   const submit = form.querySelector("button[type=submit]");
   const entrySelect = form.querySelector("#caller-entry");
+  let currentSignal = null;
   const sideSelect = form.querySelector('[name="side"]');
   const exitOrderTypes = new Set(["stop-loss", "take-profit", "bracket", "trailing-stop", "trailing-stop-limit"]);
 
@@ -33,7 +34,7 @@
     try {
       if (!window.ethereum) throw new Error("Install an EVM wallet such as MetaMask to sign a caller card.");
       const values = new FormData(form);
-      const plan = {
+      const plan = () => ({
         token: String(values.get("token") || "").trim().replace(/^\$/, ""),
         chain: values.get("chain"), side: exitOrderTypes.has(String(values.get("entryType"))) ? "sell" : values.get("side"), entryType: values.get("entryType"),
         entryPrice: numberOrNull(String(values.get("entryPrice") || "")),
@@ -46,13 +47,14 @@
         expiryHours: numberOrNull(String(values.get("expiryHours") || "")),
         trailPercent: numberOrNull(String(values.get("trailPercent") || "")),
         activationPrice: numberOrNull(String(values.get("activationPrice") || "")),
-      };
-      const prepared = await request("/signals/message", plan);
+      });
+      const prepared = await request("/signals/message", plan());
       status.textContent = "Check your wallet to sign the strategy…";
       const [signer] = await window.ethereum.request({ method: "eth_requestAccounts" });
       const signature = await window.ethereum.request({ method: "personal_sign", params: [toHex(prepared.message), signer] });
       status.textContent = "Creating verified followable strategy…";
       const created = await request("/signals", { plan: prepared.draft, signer, signature });
+      currentSignal = created.signal;
       tweet.value = created.tweetText;
       document.querySelector("#open-x").href = `https://twitter.com/intent/tweet?text=${encodeURIComponent(created.tweetText)}`;
       result.hidden = false;
@@ -65,5 +67,25 @@
   document.querySelector("#copy-tweet").addEventListener("click", async () => {
     await navigator.clipboard.writeText(tweet.value);
     document.querySelector("#copy-tweet").textContent = "Copied";
+  });
+
+  document.querySelector("#publish-revision").addEventListener("click", async () => {
+    const status = document.querySelector("#revision-status");
+    if (!currentSignal) return;
+    try {
+      const values = new FormData(form);
+      const currentPlan = {
+        token: String(values.get("token") || "").trim().replace(/^\$/, ""), chain: values.get("chain"), side: exitOrderTypes.has(String(values.get("entryType"))) ? "sell" : values.get("side"), entryType: values.get("entryType"),
+        entryPrice: numberOrNull(String(values.get("entryPrice") || "")), triggerPrice: numberOrNull(String(values.get("triggerPrice") || "")), triggerDirection: values.get("triggerDirection"), stopLoss: numberOrNull(String(values.get("stopLoss") || "")), takeProfit: numberOrNull(String(values.get("takeProfit") || "")), durationHours: numberOrNull(String(values.get("durationHours") || "")), bucketCount: numberOrNull(String(values.get("bucketCount") || "")), expiryHours: numberOrNull(String(values.get("expiryHours") || "")), trailPercent: numberOrNull(String(values.get("trailPercent") || "")), activationPrice: numberOrNull(String(values.get("activationPrice") || "")),
+      };
+      const reason = document.querySelector("#revision-reason").value.trim();
+      status.textContent = "Validating revision…";
+      const prepared = await request(`/signals/${currentSignal.id}/revisions/message`, { plan: currentPlan, reason });
+      const [signer] = await window.ethereum.request({ method: "eth_requestAccounts" });
+      status.textContent = "Check your wallet to sign the revision…";
+      const signature = await window.ethereum.request({ method: "personal_sign", params: [toHex(prepared.message), signer] });
+      const created = await request(`/signals/${currentSignal.id}/revisions`, { plan: prepared.draft, reason, signature });
+      status.textContent = `Revision ${created.revision.revision} recorded. Share a new post that references planb:${currentSignal.id}; followers will see the immutable revision history.`;
+    } catch (error) { status.textContent = error.message; }
   });
 })();

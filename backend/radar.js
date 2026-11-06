@@ -1,7 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const { searchAssets } = require('./flash.js')
-const { getSignal, listSignals, settlePassport } = require('./signals.js')
+const { getSignal, listSignals, listObservedSignals, settlePassport } = require('./signals.js')
 const { signalRoom } = require('./plans.js')
 
 const DATA_DIR = path.join(__dirname, 'data')
@@ -92,6 +92,7 @@ async function freshSignalSummary(signal) {
   const summary = signalSummary(signal, currentPrice)
   summary.passport = await settlePassport(signal)
   summary.recommendation = signal.recommendation || null
+  summary.revisions = Array.isArray(signal.revisions) ? signal.revisions.map(({ revision, createdAt, reason, draft, recommendation }) => ({ revision, createdAt, reason, draft, recommendation })) : []
   return summary
 }
 
@@ -148,8 +149,10 @@ async function terminalCtrl(req, res) {
   const entryType = text(req.query.entryType, 40).toLowerCase()
   const freshness = text(req.query.freshness, 40).toLowerCase()
   const sort = text(req.query.sort, 40).toLowerCase() || 'newest'
-  let rows = await Promise.all(listSignals()
-    .filter((signal) => signal.verified)
+  const scope = text(req.query.scope, 20).toLowerCase() || 'verified'
+  const source = scope === 'observed' ? listObservedSignals() : listSignals()
+  let rows = await Promise.all(source
+    .filter((signal) => scope === 'observed' ? !signal.verified : signal.verified)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, 80)
     .map(freshSignalSummary))
@@ -157,7 +160,7 @@ async function terminalCtrl(req, res) {
   if (freshness) rows = rows.filter((row) => String(row.decay && row.decay.state || '').toLowerCase() === freshness)
   if (sort === 'followed') rows.sort((a, b) => Number(b.room && b.room.followers || 0) - Number(a.room && a.room.followers || 0))
   if (sort === 'fresh') rows.sort((a, b) => (a.decay.state === 'fresh' ? -1 : 0) - (b.decay.state === 'fresh' ? -1 : 0))
-  res.json({ signals: rows.slice(0, 50), swarms: signalSwarms(rows), note: 'Only wallet-signed Caller Cards appear in Radar. Followers always choose their own size and sign from their own wallet.' })
+  res.json({ signals: rows.slice(0, 50), swarms: scope === 'verified' ? signalSwarms(rows) : [], scope, note: scope === 'verified' ? 'Only wallet-signed Caller Cards appear in this view. Followers always choose their own size and sign from their own wallet.' : 'Observed signals were parsed from public posts. They are not caller-signed, do not affect reputation, and must be reviewed manually.' })
 }
 
 async function roomCtrl(req, res) {

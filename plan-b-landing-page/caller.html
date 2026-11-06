@@ -21,7 +21,7 @@
       <div class="field-grid"><label><span>Stop loss</span><input name="stopLoss" inputmode="decimal" placeholder="Optional bracket"></label><label><span>Take profit</span><input name="takeProfit" inputmode="decimal" placeholder="Optional bracket"></label></div>
       <div class="field-grid"><label><span>Trailing distance (%)</span><input name="trailPercent" inputmode="decimal" placeholder="Trailing only"></label><label><span>Trail activation price</span><input name="activationPrice" inputmode="decimal" placeholder="Optional"></label></div>
       <button class="button caller-submit" type="submit">Validate and sign strategy</button><p class="caller-status" id="caller-status"></p>
-      <section class="caller-result" id="caller-result" hidden><span>Verified strategy tweet text</span><textarea id="caller-tweet" readonly></textarea><div><button class="button" id="copy-tweet" type="button">Copy tweet text</button><a class="text-link" id="open-x" target="_blank" rel="noopener">Open in X ↗</a></div></section>
+      <section class="caller-result" id="caller-result" hidden><span>Verified strategy tweet text</span><textarea id="caller-tweet" readonly></textarea><div><button class="button" id="copy-tweet" type="button">Copy tweet text</button><a class="text-link" id="open-x" target="_blank" rel="noopener">Open in X ↗</a></div><div class="revision-tools"><label><span>Revision note</span><input id="revision-reason" maxlength="240" placeholder="Why did this plan change?"></label><button class="button button-small" id="publish-revision" type="button">Sign current form as revision</button></div><p class="caller-status" id="revision-status"></p></section>
     </form>
   </main>
   <script src="caller.js"></script>

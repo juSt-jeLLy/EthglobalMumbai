@@ -85,6 +85,8 @@ function createPlanCtrl(req, res) {
     flashStatus: 'ORDER_STATUS_PENDING',
     result: null,
     transactionId: null,
+    receipt: safeReceipt(body.receipt),
+    revisions: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }
@@ -92,6 +94,24 @@ function createPlanCtrl(req, res) {
   savePlans()
   emit(plan)
   res.status(201).json(publicPlan(plan))
+}
+
+function safeReceipt(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const finite = (input) => Number.isFinite(Number(input)) ? Number(input) : null
+  return {
+    quotedAt: text(value.quotedAt, 40) || null,
+    quoteId: text(value.quoteId, 120) || null,
+    estimatedPriceImpact: finite(value.estimatedPriceImpact),
+    estimatedFeeNotional: finite(value.estimatedFeeNotional),
+    quotedFromAmount: text(value.quotedFromAmount, 100) || null,
+    quotedToAmount: text(value.quotedToAmount, 100) || null,
+    executionPrice: finite(value.executionPrice),
+    fillFeeNotional: finite(value.fillFeeNotional),
+    integratorFeeNotional: finite(value.integratorFeeNotional),
+    fillTransactionId: text(value.fillTransactionId, 180) || null,
+    updatedAt: new Date().toISOString(),
+  }
 }
 
 function listPlansCtrl(req, res) {
@@ -198,6 +218,17 @@ function applyOrderUpdate(order) {
     plan.state = 'failed'
   }
   if (order.transactionId) plan.transactionId = order.transactionId
+  const fill = Array.isArray(order.fills) ? order.fills.at(-1) : null
+  if (fill) {
+    plan.receipt = {
+      ...(plan.receipt || {}),
+      executionPrice: Number(fill.fillPrice || fill.price) || plan.receipt && plan.receipt.executionPrice || null,
+      fillFeeNotional: Number(fill.feeNotional) || plan.receipt && plan.receipt.fillFeeNotional || null,
+      integratorFeeNotional: Number(fill.integratorFeeNotional) || plan.receipt && plan.receipt.integratorFeeNotional || null,
+      fillTransactionId: text(fill.transactionId, 180) || plan.receipt && plan.receipt.fillTransactionId || null,
+      updatedAt: new Date().toISOString(),
+    }
+  }
   savePlans()
   emit(plan)
 }

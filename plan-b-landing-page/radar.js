@@ -15,6 +15,7 @@
   };
   async function load() {
     const params = new URLSearchParams();
+    params.set("scope", $("#scope-filter").value);
     if ($("#entry-filter").value) params.set("entryType", $("#entry-filter").value);
     if ($("#freshness-filter").value) params.set("freshness", $("#freshness-filter").value);
     params.set("sort", $("#sort-filter").value);
@@ -34,7 +35,10 @@
         const recommendation = row.recommendation || {};
         const handle = String(passport.authorHandle || "").toLowerCase();
         const watch = handle ? `<button class="radar-watch" data-watch="${safe(handle)}">${watching.has(handle) ? "Watching" : "Watch @" + safe(handle)}</button>` : "";
-        return `<article class="radar-card"><div class="radar-card-head"><div><span class="signal-state ${safe(row.decay && row.decay.state)}">${safe(row.decay && row.decay.label || "Unknown")}</span><h2>${safe(row.asset.symbol)} <small>· ${safe(row.asset.chain)}</small></h2></div><span class="radar-price">$${format(row.asset.price, 6)}</span></div><p class="radar-strategy">${safe(row.strategy && row.strategy.summary || `${row.draft.side} ${row.draft.entryType}`)}</p><div class="radar-metrics"><span>${safe(row.draft.side)} · ${safe(row.draft.entryType)}</span><span>${Number(row.room && row.room.followers || 0)} following</span><span>${safe(passportLine(passport))}</span></div><div class="radar-recommendation"><b>${safe(recommendation.title || "Review strategy")}</b><span>${safe(recommendation.rationale || row.decay && row.decay.reason || "Review price and protection before signing.")}</span></div><footer><a href="${profile}">Caller record →</a>${source}${watch}</footer></article>`;
+        const observed = body.scope === "observed";
+        const revision = row.revisions && row.revisions.at(-1);
+        const revisionLine = revision ? `<div class="radar-revision"><b>Revision ${revision.revision}</b><span>${safe(revision.reason || "Strategy terms updated by caller")}</span></div>` : "";
+        return `<article class="radar-card"><div class="radar-card-head"><div><span class="signal-state ${safe(row.decay && row.decay.state)}">${observed ? "Observed · manual review" : safe(row.decay && row.decay.label || "Unknown")}</span><h2>${safe(row.asset.symbol)} <small>· ${safe(row.asset.chain)}</small></h2></div><span class="radar-price">$${format(row.asset.price, 6)}</span></div><p class="radar-strategy">${safe(row.strategy && row.strategy.summary || `${row.draft.side} ${row.draft.entryType}`)}</p><div class="radar-metrics"><span>${safe(row.draft.side)} · ${safe(row.draft.entryType)}</span>${observed ? "<span>Not caller-signed · not scored</span>" : `<span>${Number(row.room && row.room.followers || 0)} following</span>`}<span>${safe(passportLine(passport))}</span></div>${revisionLine}<div class="radar-recommendation"><b>${safe(recommendation.title || "Review strategy")}</b><span>${safe(recommendation.rationale || row.decay && row.decay.reason || "Review price and protection before signing.")}</span></div><footer>${observed ? "" : `<a href="${profile}">Caller record →</a>`}${source}${watch}</footer></article>`;
       }).join("") : '<div class="leaderboard-empty">No signed Caller Cards match those filters yet.</div>';
       document.querySelectorAll("[data-watch]").forEach((button) => button.addEventListener("click", () => {
         const items = watchlist(); const handle = button.dataset.watch;
@@ -42,6 +46,6 @@
       }));
     } catch (error) { $("#radar-list").innerHTML = `<div class="leaderboard-empty">${safe(error.message)}</div>`; }
   }
-  ["#entry-filter", "#freshness-filter", "#sort-filter", "#watchlist-only"].forEach((selector) => $(selector).addEventListener("change", load));
+  ["#scope-filter", "#entry-filter", "#freshness-filter", "#sort-filter", "#watchlist-only"].forEach((selector) => $(selector).addEventListener("change", load));
   load();
 })();

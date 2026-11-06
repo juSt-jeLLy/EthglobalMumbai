@@ -1972,6 +1972,14 @@
           strategy: compiledStrategy,
           stopLoss: state.attachBracket ? state.stopPrice : null,
           takeProfit: state.attachBracket ? state.targetPrice : null,
+          receipt: {
+            quotedAt: new Date().toISOString(),
+            quoteId: quote.quoteId,
+            estimatedPriceImpact: quote.estimatedPriceImpact,
+            estimatedFeeNotional: quote.fees && quote.fees.estimatedFeeNotional,
+            quotedFromAmount: quote.from && quote.from.amount,
+            quotedToAmount: quote.to && quote.to.amount,
+          },
         }).then(loadSocialProof, (error) => console.warn("[Plan B] Could not record social plan:", error.message));
         let statusText = "submitted";
         let txLink = "";
@@ -2449,7 +2457,10 @@
       list.innerHTML = visible.length ? visible.map((plan) => {
         const resolved = ["hit_target", "stopped_out"].includes(plan.state);
         const shareText = `${plan.token} plan ${plan.state === "hit_target" ? "hit its target" : "was stopped out"} via Plan B. Order ${plan.orderId}`;
-        return `<article class="row" data-id="${escapeHtml(plan.orderId)}"><div class="top"><span class="token">${escapeHtml(plan.token)} · ${escapeHtml(plan.planType)}</span><span class="state">${escapeHtml(stateLabel(plan.state))}</span></div><div class="meta">${escapeHtml(plan.chain)} · ${new Date(plan.createdAt).toLocaleString()}</div><div class="actions">${activeTab === "open" ? `<button class="danger" data-cancel="entry">Cancel entry</button>${plan.bracketOrderId ? '<button class="danger" data-cancel="both">Cancel entry + protection</button>' : ""}` : ""}${resolved ? `<a class="share" target="_blank" rel="noopener" href="https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}">Share receipt on X ↗</a>` : ""}</div></article>`;
+        const canReviseLimit = /^limit(?:\+bracket)?$/.test(plan.planType || "");
+        const receipt = plan.receipt && (plan.receipt.estimatedPriceImpact !== null || plan.receipt.estimatedFeeNotional !== null)
+          ? `<div class="meta">Flash quote · ${plan.receipt.estimatedPriceImpact !== null ? `${(Number(plan.receipt.estimatedPriceImpact) * 100).toFixed(2)}% impact` : "impact unavailable"}${plan.receipt.estimatedFeeNotional !== null ? ` · ~$${Number(plan.receipt.estimatedFeeNotional).toFixed(2)} fees` : ""}</div>` : "";
+        return `<article class="row" data-id="${escapeHtml(plan.orderId)}"><div class="top"><span class="token">${escapeHtml(plan.token)} · ${escapeHtml(plan.planType)}</span><span class="state">${escapeHtml(stateLabel(plan.state))}</span></div><div class="meta">${escapeHtml(plan.chain)} · ${new Date(plan.createdAt).toLocaleString()}</div>${receipt}<div class="actions">${activeTab === "open" ? `${canReviseLimit ? '<button data-revise="limit">Revise limit</button>' : ""}<button class="danger" data-cancel="entry">Cancel entry</button>${plan.bracketOrderId ? '<button class="danger" data-cancel="both">Cancel entry + protection</button>' : ""}` : ""}${resolved ? `<a class="share" target="_blank" rel="noopener" href="https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}">Share receipt on X ↗</a>` : ""}</div></article>`;
       }).join("") : `<div class="empty">No ${activeTab} plans for this wallet.</div>`;
     };
     const load = async () => {
@@ -2472,10 +2483,30 @@
         : await walletRequest("personal_sign", [utf8ToHex(message), wallet.account]);
       await flashApi("cancel-order", { orderId, cancelMessage: message, userSignature });
     };
+    const reviseLimit = async (plan) => {
+      const price = window.prompt("New limit notional price", "");
+      if (!price || !(Number(price) > 0)) return;
+      const issuedAt = new Date().toISOString();
+      const message = `Definitive Flash — Update Order\nOrder: ${plan.orderId}\nIssued At: ${issuedAt}\nLimit Notional Price: ${price}`;
+      const isSvm = plan.chain === "solana";
+      const userSignature = isSvm
+        ? await walletRequest("solana_sign_message", [message])
+        : await walletRequest("personal_sign", [utf8ToHex(message), wallet.account]);
+      await flashApi("update-order", { orderId: plan.orderId, limitNotionalPrice: price, updateMessage: message, userSignature });
+    };
     root.querySelector(".launcher").addEventListener("click", () => { drawer.classList.toggle("open"); if (drawer.classList.contains("open")) load(); });
     root.querySelector(".close").addEventListener("click", () => drawer.classList.remove("open"));
     root.querySelector(".tabs").addEventListener("click", (event) => { const tab = event.target.closest("[data-tab]"); if (tab) { activeTab = tab.dataset.tab; renderRows(); } });
     list.addEventListener("click", async (event) => {
+      const revision = event.target.closest("[data-revise]");
+      if (revision) {
+        const plan = rows.find((row) => row.orderId === revision.closest("[data-id]").dataset.id);
+        if (!plan) return;
+        revision.disabled = true; revision.textContent = "Check wallet…";
+        try { await reviseLimit(plan); notice.textContent = "Flash limit update submitted. Flash keeps the same order ID via cancel-and-replace."; await load(); }
+        catch (error) { revision.textContent = /reject|denied/i.test(error.message) ? "Cancelled in wallet" : "Revise limit"; notice.textContent = error.message; }
+        return;
+      }
       const button = event.target.closest("[data-cancel]");
       if (!button) return;
       const plan = rows.find((row) => row.orderId === button.closest("[data-id]").dataset.id);

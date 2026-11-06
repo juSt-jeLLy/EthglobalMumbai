@@ -12,6 +12,7 @@ const ROUTES = {
   'setup-transaction': { method: 'POST', path: '/setup-transaction' },
   orders: { method: 'GET', path: '/orders' },
   'order-detail': { method: 'GET', path: ({ orderId }) => `/orders/${encodeURIComponent(orderId)}` },
+  'update-order': { method: 'PATCH', path: ({ orderId }) => `/orders/${encodeURIComponent(orderId)}` },
   'cancel-order': { method: 'POST', path: ({ orderId }) => `/orders/${encodeURIComponent(orderId)}/cancel` },
 }
 const ORDER_TYPES = new Set(['market', 'limit', 'twap', 'stop', 'stop-loss', 'take-profit', 'bracket', 'trailing-stop', 'trailing-stop-limit'])
@@ -147,6 +148,11 @@ function validateFlashInput(endpoint, params) {
     if (!string('orderId', 80) || !string('cancelMessage', 500) || !string('userSignature', 500)) return 'orderId, cancelMessage and userSignature are required'
     return ''
   }
+  if (endpoint === 'update-order') {
+    if (!string('orderId', 80) || !string('updateMessage', 1200) || !string('userSignature', 2000)) return 'orderId, updateMessage and userSignature are required'
+    const hasUpdate = string('limitCrossPrice') || string('limitNotionalPrice') || (Array.isArray(params.triggers) && params.triggers.length) || (params.trigger && typeof params.trigger === 'object')
+    return hasUpdate ? '' : 'An order update requires a limit price, trigger, or bracket triggers'
+  }
   if (endpoint === 'setup-transaction') return string('signedSetupTx', 100000) ? '' : 'signedSetupTx is required'
   if (endpoint === 'quote' || endpoint === 'order') {
     for (const key of ['targetChain', 'contraChain', 'targetAsset', 'contraAsset', 'side', 'qty', 'orderType']) if (!string(key)) return `${key} is required`
@@ -172,7 +178,7 @@ async function flashProxyCtrl(req, res) {
   const routePath = typeof route.path === 'function' ? route.path(params) : route.path
   const upstreamParams = route.method === 'GET'
     ? Object.fromEntries(Object.entries(params).filter(([key]) => !['orderId', 'address'].includes(key)))
-    : req.body || {}
+    : Object.fromEntries(Object.entries(req.body || {}).filter(([key]) => !(req.params.endpoint === 'update-order' && key === 'orderId')))
 
   try {
     if (req.params.endpoint === 'search') return res.json(await searchAssets(upstreamParams))

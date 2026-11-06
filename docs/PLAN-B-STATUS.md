@@ -14,10 +14,14 @@ Last updated: 2026-11-06
 ## Social/accountability layer
 
 - **Verified Caller Card:** a caller signs a canonical strategy message. The later X post is attached as source evidence by the extension without modifying that signed strategy.
+- **Source attestation:** a linked post must contain the specific `planb:<id>` reference. The Passport distinguishes `browser_observed`, `public_verified`, `public_available_unverified`, `unavailable`, and `removed`; a public embed check never silently becomes identity proof.
 - **Signal Passport:** stores text hash, public source, exact asset, contract-integrity result, Flash detection price, order terms, expiry, availability checks and one expiry mark-price direction result.
+- **Append-only revisions:** a Caller Card signer can publish a separately signed strategy revision with a reason. Original Passport terms never change; Radar shows the newest revision and its explanation.
+- **Flash execution receipts:** a follower record keeps quote ID, quote time, estimated price impact and fee data. The order dashboard shows available quote quality and supports wallet-signed limit updates through Flash's cancel-and-replace endpoint.
 - **No fake combined trust score:** identity verification, historical signed-call outcomes, follower Flash outcomes, contract integrity and token safety remain separate concepts in the UI/data.
 - **Caller record:** only signed Caller Cards count toward hit rate and median price-direction result. Parsed public posts can be observed but never improve a caller score.
-- **Radar:** `GET /terminal` provides verified Caller Cards with state filters, advanced-order type filters, swarm cards and Flash execution recommendations. The landing-page Radar terminal consumes it and has a browser-local X-handle watchlist.
+- **Radar:** `GET /terminal` has distinct `verified` and `observed` feeds. Observed posts never count toward reputation and are labelled manual review; the signed feed supports state/order filters, swarm cards, Flash execution recommendations and a browser-local X-handle watchlist.
+- **Methodology gate:** caller records are `unscored`, `emerging`, or `established`; at least five expiry-scored signed Caller Cards are required before the hit rate is labelled established. Chain and order-type counts stay visible rather than becoming a synthetic trust score.
 
 ## Important limits (intentional and visible)
 
@@ -34,8 +38,9 @@ Last updated: 2026-11-06
 | `POST /parse` | Groq + server validation of a tweet or voice instruction |
 | `POST /signals` | Creates a wallet-signed Caller Card |
 | `POST /signals/:id/source` | Attaches the public X source after posting |
+| `POST /signals/:id/revisions/message` / `POST /signals/:id/revisions` | Prepares and stores a caller-signed append-only strategy revision |
 | `POST /signals/capture` | Stores an unsigned observed-signal Passport separately |
 | `GET /signals/:id/passport` | Reads a Passport; `?refresh=availability` runs an on-demand public availability check |
 | `GET /creators/:creator` | Caller record with signed-call statistics |
-| `GET /terminal` | Public Radar feed of signed Caller Cards |
+| `GET /terminal?scope=verified|observed` | Public Radar feed; signed Caller Cards or separately labelled observed posts |
 | `GET /radar?funderAddress=…` | Wallet-specific followed-caller feed used by the extension |

@@ -43,6 +43,16 @@ function canonicalMessage(result) {
   ].join('\n')
 }
 
+function canonicalRevisionMessage(signal, result, reason, revision) {
+  return [
+    'Plan B — Caller Plan Revision',
+    `Plan: ${signal.id}`,
+    `Revision: ${revision}`,
+    `Reason: ${reason || 'No reason supplied'}`,
+    canonicalMessage(result),
+  ].join('\n')
+}
+
 function clean(value, max = 2000) {
   return typeof value === 'string' ? value.trim().slice(0, max) : ''
 }
@@ -82,6 +92,7 @@ function passportFor(result, context = {}) {
       expiresAt: new Date(Date.now() + expiryHours * 3600000).toISOString(),
     },
     availability: { status: clean(context.tweetId, 40) ? 'not_checked' : 'unattached', checks: [] },
+    sourceVerification: { status: clean(context.tweetId, 40) ? 'browser_observed' : 'unattached', checks: [] },
     settlement: null,
   }
 }
@@ -124,6 +135,19 @@ async function checkAvailability(signal) {
     const checks = [...(passport.availability.checks || []), { status, checkedAt: new Date().toISOString() }].slice(-6)
     const consecutiveMissing = checks.slice(-2).length === 2 && checks.slice(-2).every((check) => check.status === 'not_public')
     passport.availability = { status: consecutiveMissing ? 'removed' : status, checks }
+    if (response.ok) {
+      const embed = await response.json().catch(() => ({}))
+      const authorUrl = String(embed.author_url || '').toLowerCase()
+      const text = String(embed.html || '').replace(/<[^>]*>/g, ' ').replace(/&amp;/g, '&')
+      const expected = `planb:${signal.id}`.toLowerCase()
+      const authorMatches = authorUrl.includes(`/${String(passport.authorHandle || '').toLowerCase()}`)
+      const referenceMatches = text.toLowerCase().includes(expected)
+      const verification = authorMatches && referenceMatches ? 'public_verified' : 'public_available_unverified'
+      passport.sourceVerification = {
+        status: verification,
+        checks: [...(passport.sourceVerification && passport.sourceVerification.checks || []), { status: verification, checkedAt: new Date().toISOString() }].slice(-6),
+      }
+    }
     saveSignals()
   } catch {
     passport.availability = { ...(passport.availability || {}), status: 'unavailable', checks: passport.availability && passport.availability.checks || [] }
@@ -220,19 +244,49 @@ function attachSourceCtrl(req, res) {
   const sourceText = clean(context.text, 4000)
   if (!tweetId || !authorHandle) return res.status(400).json({ error: 'InvalidSource', message: 'tweetId and authorHandle are required.' })
   if (signal.passport.tweetId && signal.passport.tweetId !== tweetId) return res.status(409).json({ error: 'SourceAlreadyAttached', message: 'This Caller Card is already linked to a different post.' })
+  if (!sourceText.toLowerCase().includes(`planb:${signal.id}`.toLowerCase())) return res.status(422).json({ error: 'MissingPlanReference', message: 'The observed post does not contain this Caller Card reference.' })
   signal.passport.tweetId = tweetId
   signal.passport.authorHandle = authorHandle
   signal.passport.sourceUrl = `https://x.com/${authorHandle}/status/${tweetId}`
   signal.passport.textHash = sourceText ? crypto.createHash('sha256').update(sourceText).digest('hex') : signal.passport.textHash
   signal.passport.availability = { status: 'not_checked', checks: [] }
+  signal.passport.sourceVerification = { status: 'browser_observed', checks: [{ status: 'browser_observed', checkedAt: new Date().toISOString() }] }
   saveSignals()
   res.json({ signalId: signal.id, passport: signal.passport })
+}
+
+async function prepareRevisionCtrl(req, res) {
+  try {
+    const signal = getSignal(String(req.params.id || ''))
+    if (!signal || !signal.verified) return res.status(404).json({ error: 'NotFound', message: 'Signed Caller Card not found.' })
+    const result = await validateDraft({ confidence: 1, missing: [], ambiguous: [], ...((req.body && req.body.plan) || {}) })
+    const reason = clean(req.body && req.body.reason, 240)
+    const revision = (signal.revisions || []).length + 1
+    res.json({ ...result, revision, message: canonicalRevisionMessage(signal, result, reason, revision) })
+  } catch (error) { res.status(Number(error.status) || 422).json({ error: 'InvalidRevision', message: error.message }) }
+}
+
+async function createRevisionCtrl(req, res) {
+  try {
+    const signal = getSignal(String(req.params.id || ''))
+    if (!signal || !signal.verified) return res.status(404).json({ error: 'NotFound', message: 'Signed Caller Card not found.' })
+    const result = await validateDraft({ confidence: 1, missing: [], ambiguous: [], ...((req.body && req.body.plan) || {}) })
+    const reason = clean(req.body && req.body.reason, 240)
+    const revision = (signal.revisions || []).length + 1
+    const message = canonicalRevisionMessage(signal, result, reason, revision)
+    const signature = String(req.body && req.body.signature || '')
+    if (!/^0x[a-f0-9]+$/i.test(signature) || verifyMessage(message, signature).toLowerCase() !== signal.signer) return res.status(401).json({ error: 'InvalidSignature', message: 'Only the original Caller Card signer can publish a revision.' })
+    const record = { revision, createdAt: new Date().toISOString(), reason: reason || null, draft: result.draft, strategy: result.strategy, recommendation: result.recommendation, signature }
+    signal.revisions = [...(signal.revisions || []), record]
+    saveSignals()
+    res.status(201).json({ signalId: signal.id, revision: record })
+  } catch (error) { res.status(Number(error.status) || 422).json({ error: 'InvalidRevision', message: error.message }) }
 }
 
 async function passportCtrl(req, res) {
   const signal = getSignal(String(req.params.id || ''))
   if (!signal) return res.status(404).json({ error: 'NotFound', message: 'Signal not found.' })
-  if (req.query.refresh === 'availability') await checkAvailability(signal)
+  if (req.query.refresh === 'availability' || req.query.refresh === 'source') await checkAvailability(signal)
   res.json({ signalId: signal.id, verified: signal.verified, passport: await settlePassport(signal) })
 }
 
@@ -247,6 +301,7 @@ async function creatorProfileCtrl(req, res) {
   const wins = settled.filter((passport) => passport.settlement.outcome === 'price_in_favor').length
   const deleted = passports.filter((passport) => passport && passport.availability && passport.availability.status === 'removed').length
   const returns = settled.map((passport) => passport.settlement.returnPercent).filter(Number.isFinite)
+  const by = (key) => Object.entries(verifiedRows.reduce((all, signal) => { const value = String(key === 'chain' ? signal.asset && signal.asset.chain : signal.draft && signal.draft.entryType || 'unknown'); all[value] = (all[value] || 0) + 1; return all }, {})).map(([value, count]) => ({ value, count }))
   res.json({
     creator: requested,
     verifiedIdentity: verifiedRows.some((signal) => String(signal.signer || '').toLowerCase() === requested),
@@ -255,6 +310,9 @@ async function creatorProfileCtrl(req, res) {
     scored: settled.length,
     hitRate: settled.length ? wins / settled.length : null,
     medianReturnPercent: median(returns),
+    reliability: settled.length >= 5 ? 'established' : settled.length ? 'emerging' : 'unscored',
+    minimumScoredSignals: 5,
+    breakdown: { orderTypes: by('orderType'), chains: by('chain') },
     deletedSignals: deleted,
     records: passports.filter(Boolean).sort((a, b) => b.capturedAt.localeCompare(a.capturedAt)).slice(0, 30),
   })
@@ -274,4 +332,6 @@ function getSignalCtrl(req, res) {
   res.json({ signal })
 }
 
-module.exports = { prepareSignalCtrl, createSignalCtrl, captureSignalCtrl, attachSourceCtrl, passportCtrl, creatorProfileCtrl, getSignalCtrl, getSignal, listSignals, settlePassport, checkAvailability }
+function listObservedSignals() { return signals.filter((signal) => signal && !signal.verified) }
+
+module.exports = { prepareSignalCtrl, createSignalCtrl, captureSignalCtrl, attachSourceCtrl, prepareRevisionCtrl, createRevisionCtrl, passportCtrl, creatorProfileCtrl, getSignalCtrl, getSignal, listSignals, listObservedSignals, settlePassport, checkAvailability, canonicalRevisionMessage }
