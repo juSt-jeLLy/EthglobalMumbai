@@ -105,12 +105,16 @@ async function settlePassport(signal) {
   const passport = signal.passport
   if (!passport) return null
   let currentPrice = price(signal.asset && signal.asset.price)
-  try {
-    const found = await searchAssets({ query: passport.asset.address, chain: passport.asset.chain, limit: 10 })
-    const asset = (found.assets || []).find((item) => String(item.address).toLowerCase() === String(passport.asset.address).toLowerCase())
-    currentPrice = price(asset && asset.price) || currentPrice
-  } catch { /* A previously captured price is still useful evidence. */ }
   const expiresAt = Date.parse(passport.terms && passport.terms.expiresAt)
+  // Settlement is the only time a Passport needs a fresh mark. Avoid making
+  // every Radar read depend on upstream discovery while the signal is active.
+  if (!passport.settlement && Number.isFinite(expiresAt) && Date.now() >= expiresAt) {
+    try {
+      const found = await searchAssets({ query: passport.asset.address, chain: passport.asset.chain, limit: 10 })
+      const asset = (found.assets || []).find((item) => String(item.address).toLowerCase() === String(passport.asset.address).toLowerCase())
+      currentPrice = price(asset && asset.price) || currentPrice
+    } catch { /* A previously captured price is still useful evidence. */ }
+  }
   if (!passport.settlement && Number.isFinite(expiresAt) && Date.now() >= expiresAt && currentPrice && passport.entryPrice) {
     const move = (currentPrice - passport.entryPrice) / passport.entryPrice
     const inFavor = passport.terms.side === 'sell' ? move < 0 : move > 0

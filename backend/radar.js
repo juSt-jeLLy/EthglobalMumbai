@@ -84,11 +84,16 @@ function signalSummary(signal, currentPrice = null, now = Date.now()) {
 
 async function freshSignalSummary(signal) {
   let currentPrice = price(signal.asset && signal.asset.price)
-  try {
-    const result = await searchAssets({ query: signal.asset.address || signal.asset.symbol, chain: signal.asset.chain, limit: 10 })
-    const matched = (result.assets || []).find((asset) => String(asset.address).toLowerCase() === String(signal.asset.address).toLowerCase()) || result.assets && result.assets[0]
-    currentPrice = price(matched && matched.price) || currentPrice
-  } catch { /* Existing signed asset data still gives a usable decay estimate. */ }
+  // A Radar page must remain responsive if an upstream discovery provider is
+  // slow or temporarily ineligible. Use the captured Flash price when it is
+  // available and only discover an asset when no price was captured at all.
+  if (!currentPrice) {
+    try {
+      const result = await searchAssets({ query: signal.asset.address || signal.asset.symbol, chain: signal.asset.chain, limit: 10 })
+      const matched = (result.assets || []).find((asset) => String(asset.address).toLowerCase() === String(signal.asset.address).toLowerCase()) || result.assets && result.assets[0]
+      currentPrice = price(matched && matched.price) || currentPrice
+    } catch { /* Existing signed asset data still gives a usable decay estimate. */ }
+  }
   const summary = signalSummary(signal, currentPrice)
   summary.passport = await settlePassport(signal)
   summary.recommendation = signal.recommendation || null
