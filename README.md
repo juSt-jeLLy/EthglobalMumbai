@@ -6,6 +6,8 @@ The Chrome extension is the in-context execution surface; Caller Cards, Radar, t
 
 The product principle is simple: social posts may suggest a strategy, but only the follower chooses size, reviews the exact asset and protections, and signs from their own wallet.
 
+Plan B also includes a production PostgreSQL data model for durable Caller Cards, Signal Passports, revisions, subscriptions, follower plans, and Flash lifecycle events. The current local demo deliberately remains JSON-backed until that database is connected through a reviewed migration; see [PostgreSQL infrastructure](infra/postgres/README.md).
+
 ## Why Plan B exists
 
 Most social trading products reduce a post to a market-buy button or ask users to trust an opaque “signal score.” Plan B instead makes the **trade structure** the product:
@@ -288,14 +290,6 @@ Open:
 - A source check can establish public availability evidence; without X OAuth/API it is not a full proof of X-account ownership.
 - Local JSON files under `backend/data/` are hackathon/demo storage, not a production ledger or multi-user database.
 - The local notification loop can alert on signals already known to Plan B. Fully automatic discovery of arbitrary KOL posts requires X API access and remains outside the current local build.
-
-## Current production follow-ups
-
-- Replace local JSON stores with authenticated, durable database storage.
-- Add X OAuth/API identity linking and proactive KOL post discovery.
-- Deploy the backend with durable scheduled jobs and production web push subscriptions.
-- Add end-to-end wallet/extension tests and a recorded onchain Flash advanced-order demo.
-- Add explicit integrator-fee configuration if Plan B is monetized through Flash.
 
 ## Repository guide
 
