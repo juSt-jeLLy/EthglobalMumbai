@@ -30,6 +30,24 @@ function validOrderId(value) {
   return /^[a-f0-9-]{20,80}$/i.test(text(value, 80))
 }
 
+function safeStrategy(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const steps = Array.isArray(value.steps) ? value.steps.slice(0, 4).map((step) => ({
+    kind: text(step && step.kind, 24),
+    orderType: text(step && step.orderType, 32),
+    label: text(step && step.label, 80),
+  })).filter((step) => step.orderType) : []
+  return {
+    version: Math.max(1, Math.min(1000, Number(value.version) || 1)),
+    strategyType: text(value.strategyType, 32),
+    title: text(value.title, 80),
+    summary: text(value.summary, 180),
+    executableAtomically: value.executableAtomically !== false,
+    steps,
+    warnings: Array.isArray(value.warnings) ? value.warnings.slice(0, 4).map((warning) => text(warning, 180)).filter(Boolean) : [],
+  }
+}
+
 function publicPlan(plan) {
   const { funderAddress, ...safe } = plan
   return { ...safe, funder: funderAddress ? `${funderAddress.slice(0, 6)}…${funderAddress.slice(-4)}` : null }
@@ -51,12 +69,16 @@ function createPlanCtrl(req, res) {
   const plan = {
     orderId: text(body.orderId, 80),
     bracketOrderId: null,
+    signalId: text(body.signalId, 80) || null,
+    strategyVersion: Math.max(1, Math.min(1000, Number(body.strategyVersion) || 1)),
     tweetId: text(body.tweetId, 40) || null,
     authorHandle: text(body.authorHandle, 30).replace(/^@/, '') || null,
     funderAddress: text(body.funderAddress, 80),
     token: text(body.token, 32).toUpperCase(),
     chain: text(body.chain, 32),
     planType: text(body.planType, 32),
+    strategyType: text(body.strategyType, 32) || null,
+    strategy: safeStrategy(body.strategy),
     stopLoss: Number(body.stopLoss) > 0 ? Number(body.stopLoss) : null,
     takeProfit: Number(body.takeProfit) > 0 ? Number(body.takeProfit) : null,
     state: 'waiting',
@@ -107,9 +129,30 @@ function leaderboardCtrl(req, res) {
   }
   const leaderboard = [...authors.values()].map((row) => {
     const resolved = row.hitTarget + row.stoppedOut
-    return { authorHandle: row.authorHandle, followers: row.wallets.size, followedPlans: row.followedPlans, hitTarget: row.hitTarget, stoppedOut: row.stoppedOut, hitRate: resolved ? row.hitTarget / resolved : null }
+    const hitRate = resolved ? row.hitTarget / resolved : null
+    // Conservative reputation: no score until a caller has three resolved
+    // follower outcomes, then shrink the raw rate toward 50% for small samples.
+    const reliability = resolved >= 3 ? Math.round(((row.hitTarget + 2) / (resolved + 4)) * 100) : null
+    return { authorHandle: row.authorHandle, followers: row.wallets.size, followedPlans: row.followedPlans, hitTarget: row.hitTarget, stoppedOut: row.stoppedOut, hitRate, resolved, reliability }
   }).sort((a, b) => (b.hitTarget - a.hitTarget) || (b.followers - a.followers)).slice(0, 50)
   res.json({ leaderboard })
+}
+
+function signalRoom(signalId) {
+  const scoped = plans.filter((plan) => plan.signalId === signalId)
+  const followers = new Set(scoped.map((plan) => String(plan.funderAddress || '').toLowerCase()).filter(Boolean)).size
+  const hitTarget = scoped.filter((plan) => plan.state === 'hit_target').length
+  const stoppedOut = scoped.filter((plan) => plan.state === 'stopped_out').length
+  const active = scoped.filter((plan) => ['waiting', 'filled'].includes(plan.state)).length
+  const resolved = hitTarget + stoppedOut
+  return {
+    followers,
+    active,
+    hitTarget,
+    stoppedOut,
+    hitRate: resolved ? hitTarget / resolved : null,
+    recentPlans: scoped.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 12).map(publicPlan),
+  }
 }
 
 function planEventsCtrl(req, res) {
@@ -159,4 +202,4 @@ function applyOrderUpdate(order) {
   emit(plan)
 }
 
-module.exports = { createPlanCtrl, listPlansCtrl, socialProofCtrl, leaderboardCtrl, planEventsCtrl, applyOrderUpdate }
+module.exports = { createPlanCtrl, listPlansCtrl, socialProofCtrl, leaderboardCtrl, planEventsCtrl, applyOrderUpdate, signalRoom }

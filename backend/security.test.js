@@ -32,3 +32,20 @@ test('blocks mutable Solana balances and confirmed honeypot simulations', () => 
   _test.evaluateHoneypot({ honeypotResult: { isHoneypot: true, honeypotReason: 'TRANSFER_FROM_FAILED' } }, honeypotBlocked, [])
   assert.ok(honeypotBlocked.some((reason) => reason.includes('honeypot')))
 })
+
+test('recognizes canonical wrapped native contracts for liquidity handling', () => {
+  assert.equal(_test.isCanonicalWrappedNative('8453', '0x4200000000000000000000000000000000000006'), true)
+  assert.equal(_test.isCanonicalWrappedNative('8453', '0x0000000000000000000000000000000000000001'), false)
+})
+
+test('never treats canonical WETH zero direct liquidity as native ETH risk', () => {
+  const wrappedBlocked = []
+  const wrappedWarnings = []
+  _test.evaluateFlashLiquidity('8453', '0x4200000000000000000000000000000000000006', { liquidity: '0' }, wrappedBlocked, wrappedWarnings)
+  assert.deepEqual(wrappedBlocked, [])
+  assert.deepEqual(wrappedWarnings, [])
+
+  const tokenBlocked = []
+  _test.evaluateFlashLiquidity('8453', '0x0000000000000000000000000000000000000001', { liquidity: '0' }, tokenBlocked, [])
+  assert.ok(tokenBlocked.some((reason) => reason.includes('liquidity')))
+})

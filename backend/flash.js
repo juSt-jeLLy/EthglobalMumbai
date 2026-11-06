@@ -3,6 +3,7 @@
 require('dotenv').config({ path: __dirname + '/.env' })
 
 const FLASH_API_URL = 'https://flash.definitive.fi/v1'
+const EVM_NATIVE_ASSET = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'
 const ROUTES = {
   search: { method: 'GET', path: '/search' },
   balances: { method: 'GET', path: ({ address }) => `/balances/${encodeURIComponent(address)}` },
@@ -103,7 +104,7 @@ async function dexScreenerSearch(params) {
       const liquidity = Number(pair.liquidity && pair.liquidity.usd) || 0
       const key = `${chain}:${token.address.toLowerCase()}`
       const candidate = {
-        chain, address: native ? '0x0000000000000000000000000000000000000000' : token.address,
+        chain, address: native ? EVM_NATIVE_ASSET : token.address,
         symbol: native ? native.symbol : token.symbol, name: native ? native.name : token.name || token.symbol,
         decimals: native ? native.decimals : null, price: Number.isFinite(price) && price > 0 ? String(price) : null,
         marketCap: pair.marketCap ? String(pair.marketCap) : null, liquidity: String(liquidity),

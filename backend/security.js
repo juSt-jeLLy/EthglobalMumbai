@@ -12,6 +12,19 @@ const FLASH_CHAINS = {
   43114: 'avalanche', 57073: 'ink', solana: 'solana',
 }
 const HONEYPOT_CHAINS = new Set(['1', '56', '8453'])
+// Flash reports token-specific liquidity. Wrapped native assets may show zero
+// here even when the corresponding native asset has deep routable liquidity.
+// Keep their contract-risk scans, but do not mistake that field for an ETH/BNB/
+// AVAX liquidity failure.
+const CANONICAL_WRAPPED_NATIVE = new Set([
+  '1:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+  '10:0x4200000000000000000000000000000000000006',
+  '8453:0x4200000000000000000000000000000000000006',
+  '42161:0x82af49447d8a07e3bd95bd0d56f35241523fbab1',
+  '43114:0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7',
+  '56:0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c',
+  '137:0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270',
+])
 const cache = new Map()
 
 function unique(values) {
@@ -29,6 +42,21 @@ function statusOne(value) {
 function numeric(value) {
   const number = Number(value)
   return Number.isFinite(number) ? number : null
+}
+
+function isCanonicalWrappedNative(chain, address) {
+  return CANONICAL_WRAPPED_NATIVE.has(`${chain}:${String(address).toLowerCase()}`)
+}
+
+function evaluateFlashLiquidity(chain, address, asset, blocked, warnings) {
+  const liquidity = numeric(asset && asset.liquidity)
+  // Native assets are scanned through their canonical wrapped contract. Flash's
+  // per-wrapper search row can legitimately have zero direct liquidity even as
+  // native ETH/BNB/AVAX has deep routable liquidity. Do not use that number for
+  // a safety verdict; contract-risk sources still run normally.
+  if (isCanonicalWrappedNative(chain, address)) return
+  if (liquidity !== null && liquidity <= 0) blocked.push('No usable token liquidity was found')
+  else if (liquidity !== null && liquidity < 5000) warnings.push(`Very low liquidity (${Math.round(liquidity).toLocaleString('en-US')} USD)`)
 }
 
 async function jsonRequest(url, options = {}) {
@@ -160,9 +188,7 @@ async function scanToken(chain, address) {
     if (name === 'flash') {
       const asset = result.value
       if (asset.riskFlagged) warnings.push('Flash flagged common token risk indicators')
-      const liquidity = numeric(asset.liquidity)
-      if (liquidity !== null && liquidity <= 0) blocked.push('No usable token liquidity was found')
-      else if (liquidity !== null && liquidity < 5000) warnings.push(`Very low liquidity (${Math.round(liquidity).toLocaleString('en-US')} USD)`)
+      evaluateFlashLiquidity(chain, address, asset, blocked, warnings)
     } else if (name === 'goplus') {
       if (chain === 'solana') evaluateSolana(result.value, blocked, warnings)
       else evaluateEvm(result.value, blocked, warnings)
@@ -209,5 +235,5 @@ async function tokenSecurityCtrl(req, res) {
 module.exports = {
   tokenSecurityCtrl,
   scanToken,
-  _test: { evaluateEvm, evaluateSolana, evaluateHoneypot },
+  _test: { evaluateEvm, evaluateSolana, evaluateHoneypot, isCanonicalWrappedNative, evaluateFlashLiquidity },
 }

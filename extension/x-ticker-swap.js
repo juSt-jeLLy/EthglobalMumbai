@@ -29,7 +29,8 @@
   };
   const CHAIN_ORDER = [8453, 1, 42161, 10, 43114, 56, 137, 999, 57073, 143, 9745, 4663, 5042, "solana"];
   const DEFAULT_CHAIN = 8453;
-  const NATIVE = "0x0000000000000000000000000000000000000000";
+  // Definitive Flash's canonical reference for an EVM chain's native gas asset.
+  const NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 
   const TOKEN_INFO = {
     ETH: { name: "Ether", color: "#627EEA" },
@@ -182,15 +183,40 @@
     if (!previous || Number(asset.liquidity || 0) >= previousLiquidity) {
       TOKEN_ADDRESSES[chainId][symbol] = [asset.address, asset.decimals ?? (previous && previous[1]), { ...asset }];
     }
-    TOKEN_INFO[symbol] = {
-      ...(TOKEN_INFO[symbol] || {}),
-      name: asset.name || symbol,
-      color: (TOKEN_INFO[symbol] && TOKEN_INFO[symbol].color) || "#536471",
-      stable: ["USDC", "USDT", "DAI", "USDE", "USDS"].includes(symbol.toUpperCase()),
-      imageUrl: asset.imageUrl || (TOKEN_INFO[symbol] && TOKEN_INFO[symbol].imageUrl),
-      price: Number(asset.price) > 0 ? Number(asset.price) : undefined,
-      riskFlagged: !!asset.riskFlagged,
-    };
+    // TOKEN_INFO is only a cross-chain display cache. Do not let a low-liquidity
+    // same-symbol result (for example a different chain's ETH) overwrite a
+    // liquid canonical asset. Trading always uses the chain-specific record in
+    // TOKEN_ADDRESSES; this keeps the card display consistent with that record.
+    const currentInfo = TOKEN_INFO[symbol] || {};
+    const currentLiquidity = Number(currentInfo.liquidity || 0);
+    const incomingLiquidity = Number(asset.liquidity || 0);
+    if (!currentInfo.price || incomingLiquidity >= currentLiquidity) {
+      TOKEN_INFO[symbol] = {
+        ...currentInfo,
+        name: asset.name || symbol,
+        color: currentInfo.color || "#536471",
+        stable: ["USDC", "USDT", "DAI", "USDE", "USDS"].includes(symbol.toUpperCase()),
+        imageUrl: asset.imageUrl || currentInfo.imageUrl,
+        price: Number(asset.price) > 0 ? Number(asset.price) : currentInfo.price,
+        liquidity: incomingLiquidity,
+        riskFlagged: !!asset.riskFlagged,
+      };
+    }
+  }
+
+  // Flash search can return different contracts with the same ticker. Keep a
+  // selected contract addressable instead of silently swapping it for another
+  // same-symbol asset already in the local cache.
+  function registerSelectableFlashAsset(asset) {
+    const chainId = FLASH_TO_CHAIN[asset && asset.chain];
+    if (chainId === undefined || !asset || !asset.symbol || !asset.address) return null;
+    let symbol = asset.symbol;
+    const existing = tokenOn(chainId, symbol);
+    if (existing && String(existing.address).toLowerCase() !== String(asset.address).toLowerCase()) {
+      symbol = `${asset.symbol} · ${String(asset.address).slice(2, 6)}`;
+    }
+    registerFlashAsset({ ...asset, symbol });
+    return symbol;
   }
 
   function searchAssets(query, chain) {
@@ -395,10 +421,10 @@
     });
   }
 
-  function parsePlanApi(text) {
+  function parsePlanApi(text, mode = "tweet") {
     if (!inExtension) return Promise.reject(new Error("Tweet parsing needs the Plan B extension"));
     return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ action: "parsePlan", text }, (response) => {
+      chrome.runtime.sendMessage({ action: "parsePlan", text, mode }, (response) => {
         if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
         if (!response || !response.ok) {
           const body = response && response.body || {};
@@ -415,6 +441,20 @@
       chrome.runtime.sendMessage({ action: "plans", op, body }, (response) => {
         if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
         if (!response || !response.ok) return reject(new Error(response && response.body && response.body.message || `Plan API error ${response && response.status || 0}`));
+        resolve(response.body);
+      });
+    });
+  }
+
+  function radarApi(path, body = {}, method = "GET") {
+    if (!inExtension) return Promise.reject(new Error("Plan B Radar needs the extension"));
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ action: "radar", path, body, method }, (response) => {
+        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+        if (!response || !response.ok) {
+          const payload = response && response.body || {};
+          return reject(Object.assign(new Error(payload.message || "Plan B Radar is unavailable"), { status: response && response.status }));
+        }
         resolve(response.body);
       });
     });
@@ -592,13 +632,17 @@
     :host { all: initial; position: fixed; z-index: 2147483000; }
     .menu {
       font-family: var(--font); -webkit-font-smoothing: antialiased;
-      min-width: 220px; padding: 4px 0; overflow: hidden;
+      min-width: 220px; max-height: min(560px, calc(100vh - 24px)); padding: 4px 0; overflow: auto;
       background: var(--bg); border-radius: 12px;
       box-shadow: 0 0 15px var(--shadow), 0 0 3px 1px var(--shadow);
       animation: drop .12s ease-out;
     }
     @keyframes drop { from { opacity: 0; transform: translateY(-4px); } }
     .title { font-size: 13px; font-weight: 700; color: var(--muted); padding: 10px 16px 6px; }
+    .search { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+    .search input { width: 100%; height: 34px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); padding: 0 9px; font: inherit; font-size: 13px; outline: none; }
+    .search input:focus { border-color: var(--accent); }
+    .search-status { padding: 7px 16px; color: var(--muted); font-size: 12px; }
     .menu button {
       display: flex; align-items: center; gap: 12px; width: 100%;
       font: inherit; color: var(--text); background: none; border: 0;
@@ -634,22 +678,31 @@
     }
 
     // items: [{ id, iconHtml, title, subtitle, disabled }]
-    function open({ anchor, title, items, selected, themeVars, onSelect }) {
+    function open({ anchor, title, items, selected, themeVars, onSelect, search }) {
       close();
       host = document.createElement("div");
       host.setAttribute("data-plan-b-dropdown", "");
       const root = host.attachShadow({ mode: "open" });
       root.innerHTML = `<style>${DROPDOWN_STYLE}</style><div class="menu" role="menu">
         ${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}
-        ${items.map((item) => `
+        ${search ? `<div class="search"><input type="search" autocomplete="off" placeholder="${escapeHtml(search.placeholder || "Search")}" aria-label="Search tokens"></div>` : ""}
+        <div class="items">${items.map((item) => `
           <button role="menuitem" data-id="${escapeHtml(item.id)}"${item.disabled ? " disabled" : ""}>
             ${item.iconHtml}
             <span class="names"><b>${escapeHtml(item.title)}</b>${item.subtitle ? `<small>${escapeHtml(item.subtitle)}</small>` : ""}</span>
             ${String(item.id) === String(selected) ? CHECK_SVG : ""}
           </button>`).join("")}</div>`;
       const menu = root.querySelector(".menu");
+      const itemsHost = root.querySelector(".items");
       applyTheme(menu, themeVars);
       document.body.appendChild(host);
+
+      const renderItems = (nextItems, message = "") => {
+        itemsHost.innerHTML = message ? `<div class="search-status">${escapeHtml(message)}</div>` : nextItems.map((item) => `
+          <button role="menuitem" data-id="${escapeHtml(item.id)}"${item.disabled ? " disabled" : ""}>
+            ${item.iconHtml}<span class="names"><b>${escapeHtml(item.title)}</b>${item.subtitle ? `<small>${escapeHtml(item.subtitle)}</small>` : ""}</span>${String(item.id) === String(selected) ? CHECK_SVG : ""}
+          </button>`).join("");
+      };
 
       // Drop down below the anchor, right-aligned with it; flip up only if there's no room below
       const rect = anchor.getBoundingClientRect();
@@ -665,6 +718,24 @@
         close();
         onSelect(item.dataset.id);
       });
+      if (search) {
+        const field = root.querySelector(".search input");
+        let searchTimer = null;
+        field.addEventListener("input", () => {
+          clearTimeout(searchTimer);
+          const query = field.value.trim();
+          if (!query) { renderItems(items); return; }
+          if (query.length < 2) { renderItems([], "Type at least two characters to search Flash assets."); return; }
+          searchTimer = setTimeout(async () => {
+            renderItems([], "Searching Flash assets…");
+            try {
+              const found = await search.onSearch(query);
+              renderItems(found, found.length ? "" : "No tradeable asset found on this network.");
+            } catch (error) { renderItems([], error.message || "Could not search Flash assets."); }
+          }, 220);
+        });
+        setTimeout(() => field.focus({ preventScroll: true }), 0);
+      }
       ["mousedown", "pointerdown", "keydown", "keyup"].forEach((type) => host.addEventListener(type, (event) => event.stopPropagation()));
 
       const onOutside = (event) => { const path = event.composedPath(); if (!path.includes(host) && !path.includes(anchor)) close(); };
@@ -699,21 +770,25 @@
   const STYLE = `${VERDICT_STYLE}
     :host { all: initial; display: block; }
     * { box-sizing: border-box; }
-    .root { font-family: var(--font); color: var(--text); -webkit-font-smoothing: antialiased; container-type: inline-size; }
+    [hidden] { display: none !important; }
+    .root { width: 100%; max-width: 100%; font-family: var(--font, system-ui, -apple-system, sans-serif); color: var(--text, rgb(231, 233, 234)); -webkit-font-smoothing: antialiased; container-type: inline-size; }
 
-    .collapse { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .25s ease; }
-    .open .collapse { grid-template-rows: 1fr; }
-    .collapse-inner { overflow: hidden; min-height: 0; }
+    .collapse { display: none; }
+    .open .collapse { display: block; }
+    .collapse-inner { width: 100%; max-width: 100%; overflow: hidden; min-height: 0; }
 
     .panel {
-      background: var(--bg);
-      border: 1px solid var(--border);
+      width: 100%; max-width: 100%; max-height: min(720px, calc(100vh - 96px)); overflow-y: auto;
+      background: var(--bg, rgb(0, 0, 0));
+      border: 1px solid var(--border, rgb(47, 51, 54));
       border-top: 0;
       border-radius: 0 0 12px 12px;
       padding: 12px;
       display: flex; flex-direction: column; gap: 10px;
       cursor: default;
+      scrollbar-width: thin;
     }
+    .panel > * { flex: none; }
     .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; }
     .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9999px; padding: 2px; }
     .seg button {
@@ -738,6 +813,22 @@
     .wallet .caret { width: 16px; height: 16px; fill: var(--muted); }
     .wallet .dot { width: 8px; height: 8px; border-radius: 50%; background: rgb(255, 173, 31); }
 
+    .strategy-card { display: grid; gap: 7px; padding: 11px 12px; border: 1px solid color-mix(in srgb, rgb(0,186,124) 34%, var(--border)); border-radius: 12px; background: color-mix(in srgb, rgb(0,186,124) 8%, var(--bg)); }
+    .strategy-kicker { color: rgb(0,186,124); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+    .strategy-title { color: var(--text); font-size: 15px; font-weight: 800; line-height: 19px; }
+    .strategy-summary { color: var(--muted); font-size: 12px; line-height: 17px; }
+    .strategy-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+    .strategy-step { padding: 4px 8px; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); color: var(--text); font-size: 11px; font-weight: 700; }
+    .strategy-arrow { color: rgb(0,186,124); font-size: 11px; }
+    .strategy-warning { color: rgb(255,173,31); font-size: 11px; line-height: 15px; }
+    .strategy-room { display:flex; flex-wrap:wrap; gap:6px; align-items:center; color:var(--muted); font-size:11px; line-height:16px; }
+    .decay { border-radius:999px; padding:3px 7px; font-weight:800; background:color-mix(in srgb, rgb(0,186,124) 16%, var(--bg)); color:rgb(0,186,124); }
+    .decay.chasing,.decay.expired { background:color-mix(in srgb, rgb(244,33,46) 16%, var(--bg)); color:rgb(255,139,145); }
+    .decay.aging { background:color-mix(in srgb, rgb(255,173,31) 16%, var(--bg)); color:rgb(255,173,31); }
+    .strategy-follow { border:1px solid rgb(0,186,124); border-radius:999px; background:transparent; color:rgb(0,186,124); padding:4px 8px; font:800 10px var(--font); cursor:pointer; }
+    .copy-guard { display:grid; grid-template-columns:1fr 1fr; gap:7px; padding:9px 10px; border:1px solid var(--border); border-radius:11px; background:color-mix(in srgb, var(--bg) 72%, rgb(0,186,124) 7%); }
+    .copy-guard b { grid-column:1/-1; font-size:11px; color:var(--text); }.copy-guard label { display:grid; gap:4px; color:var(--muted); font-size:10px; font-weight:700; }.copy-guard select,.copy-guard input { min-width:0; width:100%; border:1px solid var(--border); border-radius:7px; background:var(--bg); color:var(--text); padding:6px; font:600 11px var(--font); }
+
     /* Pay box on top, receive box below, with the switch button on the seam between them */
     .row { display: flex; flex-direction: column; gap: 4px; position: relative; }
     .order-config { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
@@ -754,6 +845,13 @@
     .order-config .checkline input { width: 16px; height: 16px; padding: 0; }
     .plan-title { grid-column: 1 / -1; font-size: 12px; font-weight: 700; letter-spacing: .04em; color: var(--text); }
     .plan-warning { grid-column: 1 / -1; margin: 0; padding: 8px 10px; border-radius: 9px; background: var(--surface); color: var(--muted); font-size: 12px; line-height: 17px; }
+    .voice-fill { grid-column: 1 / -1; display: grid; gap: 7px; padding: 9px 10px; border: 1px solid color-mix(in srgb, rgb(0,186,124) 35%, var(--border)); border-radius: 10px; background: color-mix(in srgb, rgb(0,186,124) 7%, var(--bg)); }
+    .voice-fill-toggle, .voice-fill-actions button { width: fit-content; border: 1px solid rgb(0,186,124); border-radius: 999px; background: transparent; color: rgb(0,186,124); padding: 6px 9px; font: 800 11px var(--font); cursor: pointer; }
+    .voice-fill p { margin: 0; color: var(--muted); font-size: 11px; line-height: 15px; }
+    .voice-fill textarea { width: 100%; min-height: 54px; resize: vertical; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font: 12px var(--font); }
+    .voice-fill-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .voice-fill-actions .voice-apply { background: rgb(0,186,124); color: #03140d; }
+    .voice-fill-actions button:disabled, .voice-fill-toggle:disabled { opacity: .6; cursor: wait; }
     .advanced { grid-column: 1 / -1; border-top: 1px solid var(--border); padding-top: 8px; }
     .advanced summary { cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 700; }
     .advanced-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding-top: 8px; }
@@ -900,11 +998,19 @@
       ? wallet.chainId
       : availableChains.includes(DEFAULT_CHAIN) ? DEFAULT_CHAIN : availableChains[0];
     const parsed = initialPlan && initialPlan.draft || {};
-    const parsedEntryType = ["market", "limit", "twap"].includes(parsed.entryType) ? parsed.entryType : "market";
+    const parsedEntryTypes = ["market", "limit", "twap", "stop", "stop-loss", "take-profit", "bracket", "trailing-stop", "trailing-stop-limit"];
+    const parsedEntryType = parsedEntryTypes.includes(parsed.entryType) ? parsed.entryType : "market";
+    const exitOrder = ["stop-loss", "take-profit", "bracket", "trailing-stop", "trailing-stop-limit"].includes(parsedEntryType);
+    const compiledStrategy = initialPlan && initialPlan.strategy || null;
+    const atomicBracket = compiledStrategy
+      ? compiledStrategy.protection && compiledStrategy.protection.type === "attached-bracket"
+      : ["market", "limit", "twap"].includes(parsedEntryType) && parsed.exitType === "bracket";
     const state = {
       open: !!initialPlan,
       chainId: initialChain,
-      side: parsed.side === "sell" ? "sell" : "buy",
+      // These Flash order types protect or exit an existing position, so they
+      // must sell the held asset even when a caller left the UI on Buy.
+      side: exitOrder || parsed.side === "sell" ? "sell" : "buy",
       quoteToken: "USDC",
       amount: "",
       quote: null, // { amountOut, priceImpact, feeUSD, raw, estimated, error }
@@ -913,23 +1019,27 @@
       busy: false,
       orderType: parsedEntryType,
       limitPrice: parsed.entryPrice ? String(parsed.entryPrice) : "",
-      triggerPrice: "",
-      triggerDirection: "upper",
+      triggerPrice: parsed.triggerPrice ? String(parsed.triggerPrice) : "",
+      triggerDirection: parsed.triggerDirection === "lower" ? "lower" : "upper",
       durationSeconds: parsed.durationHours ? String(Math.max(300, Math.round(Number(parsed.durationHours) * 3600))) : "1800",
-      bucketCount: "12",
-      trailPercent: "5",
-      activationPrice: "",
-      attachBracket: !!(parsed.stopLoss && parsed.takeProfit),
+      bucketCount: parsed.bucketCount ? String(Math.max(2, Math.round(Number(parsed.bucketCount)))) : "12",
+      trailPercent: parsed.trailPercent ? String(parsed.trailPercent) : "5",
+      activationPrice: parsed.activationPrice ? String(parsed.activationPrice) : "",
+      attachBracket: !!atomicBracket,
       stopPrice: parsed.stopLoss ? String(parsed.stopLoss) : "",
       targetPrice: parsed.takeProfit ? String(parsed.takeProfit) : "",
+      expireTime: parsed.expiryHours ? new Date(Date.now() + Number(parsed.expiryHours) * 3600000).toISOString() : null,
       orderId: null,
       security: null, // Plan B verdict: { loading } | { action, reasons, sources } | { error } | { native }
+      copyMode: "native",
+      maxDrift: "3",
     };
     const author = tweetAuthor(article);
     let quoteSeq = 0;
     let pendingRisk = null; // { resolve, reject } while a security warning waits for the user
     let securityPromise = null;
     let quoteTimer = null;
+    const pickerBalances = new Map();
 
     root.innerHTML = `
       <style>${STYLE}</style>
@@ -944,6 +1054,8 @@
                 </div>
                 <button class="wallet"></button>
               </div>
+              <div class="strategy-card" hidden></div>
+              <div class="copy-guard" hidden></div>
               <div class="row">
                 <label class="box pay">
                   <div class="lbl-row"><span class="lbl">You pay</span><button class="balance" hidden></button></div>
@@ -964,14 +1076,22 @@
                 </div>
               </div>
               <div class="order-config">
-                <div class="plan-title">Your plan${initialPlan ? initialPlan.verified ? " · Verified caller" : ` · ${Math.round((parsed.confidence || 0) * 100)}% parser confidence` : ""}</div>
+                <div class="plan-title">${initialPlan && initialPlan.manual ? "Manual trade · post is context, not advice" : `Your plan${initialPlan ? initialPlan.verified ? " · Verified caller" : ` · ${Math.round((parsed.confidence || 0) * 100)}% parser confidence` : ""}`}</div>
                 <label><span>How do I get in?</span><select class="entry-mode"><option value="market">Market</option><option value="limit">Limit</option><option value="twap">TWAP</option></select></label>
                 <label><span>How do I get out?</span><select class="exit-mode"><option value="none">No protection</option><option value="bracket">Stop + target</option></select></label>
                 <label class="limit-field" hidden><span>Limit price (USD)</span><input class="limit-price" inputmode="decimal" placeholder="0.00"></label>
                 <label class="duration-field" hidden><span>Duration (seconds)</span><input class="duration" inputmode="numeric" value="1800"></label>
                 <label class="stop-field" hidden><span>Stop price (USD)</span><input class="stop-price" inputmode="decimal" placeholder="0.00"></label>
                 <label class="target-field" hidden><span>Target price (USD)</span><input class="target-price" inputmode="decimal" placeholder="0.00"></label>
-                <p class="plan-warning">First-time token approval costs gas. If price gaps through your entry, protection may activate immediately. Keep bought tokens in this wallet while protection is active.</p>
+                <p class="plan-warning">${initialPlan && initialPlan.manual ? "This post reports market activity; it is not a trade instruction. Review the asset, network, size, and protection yourself. Flash spot orders do not copy leverage." : "First-time token approval costs gas. If price gaps through your entry, protection may activate immediately. Keep bought tokens in this wallet while protection is active."}</p>
+                <div class="voice-fill">
+                  <button class="voice-fill-toggle" type="button">🎙 Add order details by voice</button>
+                  <div class="voice-fill-body" hidden>
+                    <p>This stays locked to ${escapeHtml(ticker.symbol)} on ${escapeHtml(chain().name)}. Say the side, entry type, timing, limit/trigger, and protection. Your amount is always manual.</p>
+                    <textarea class="voice-fill-text" placeholder="Example: buy via TWAP over 2 hours, stop at 2,120 and target 2,450"></textarea>
+                    <div class="voice-fill-actions"><button type="button" data-voice-listen>Start listening</button><button class="voice-apply" type="button" data-voice-apply>Apply to this trade</button></div>
+                  </div>
+                </div>
                 <details class="advanced"><summary>Advanced order types</summary><div class="advanced-grid">
                   <label class="wide"><span>Flash order type</span><select class="order-type">
                     <option value="market">Market</option><option value="limit">Limit</option><option value="twap">TWAP</option><option value="dca">DCA (scheduled TWAP)</option>
@@ -1005,6 +1125,52 @@
     const input = $(".amount");
     const status = $(".status");
     let socialTimer = null;
+    let strategyRoom = null;
+    function renderStrategyCard() {
+      if (!compiledStrategy) return;
+      const strategyCard = $(".strategy-card");
+      const steps = (compiledStrategy.steps || []).map((step, index) => `${index ? '<span class="strategy-arrow">→</span>' : ''}<span class="strategy-step">${escapeHtml(step.label || step.orderType)}</span>`).join("");
+      const warning = (compiledStrategy.warnings || [])[0];
+      const decay = strategyRoom && strategyRoom.decay;
+      const room = strategyRoom && strategyRoom.room;
+      const roomLine = initialPlan.verified
+        ? `<div class="strategy-room">${decay ? `<span class="decay ${escapeHtml(decay.state)}" title="${escapeHtml(decay.reason || "")}">${escapeHtml(decay.label)}</span>` : '<span class="decay">Checking freshness</span>'}${room ? `<span>${Number(room.followers) || 0} following · ${Number(room.active) || 0} active</span>` : ""}<button class="strategy-follow" data-follow-strategy>${strategyRoom && strategyRoom.subscribed ? "Alerts on" : "Follow alerts"}</button></div>`
+        : "";
+      strategyCard.innerHTML = `<span class="strategy-kicker">${initialPlan.verified ? "VERIFIED FOLLOWABLE STRATEGY" : "FLASH STRATEGY COMPILER"}</span><span class="strategy-title">${escapeHtml(compiledStrategy.title || "Compiled strategy")}</span><span class="strategy-summary">${escapeHtml(compiledStrategy.summary || "")}</span><div class="strategy-steps">${steps}</div>${warning ? `<span class="strategy-warning">${escapeHtml(warning)}</span>` : ""}${roomLine}`;
+      strategyCard.hidden = false;
+    }
+    if (compiledStrategy) {
+      renderStrategyCard();
+    }
+    if (initialPlan && initialPlan.verified) {
+      const guard = $(".copy-guard");
+      guard.innerHTML = `<b>YOUR PROTECTED COPY RULES</b><label>Execution<select class="copy-mode"><option value="native">Use caller’s Flash strategy</option><option value="twap">Convert entry to TWAP</option><option value="limit">Guard entry with a limit</option></select></label><label>Max entry drift (%)<input class="max-drift" inputmode="decimal" value="3"></label>`;
+      guard.hidden = false;
+    }
+
+    async function loadStrategyRoom() {
+      if (!initialPlan.verified || !initialPlan.signalId) return;
+      try {
+        const response = await radarApi(`/rooms/${encodeURIComponent(initialPlan.signalId)}`);
+        strategyRoom = response.signal;
+        renderStrategyCard();
+      } catch { /* Rooms are additive; the signed strategy remains executable offline. */ }
+    }
+
+    async function subscribeToStrategy() {
+      if (!initialPlan.signalId) return;
+      try {
+        if (!accountFor(state.chainId)) await connect();
+        const funderAddress = accountFor(state.chainId);
+        await radarApi("/subscriptions", { funderAddress, signalId: initialPlan.signalId, enabled: true }, "POST");
+        strategyRoom ||= {};
+        strategyRoom.subscribed = true;
+        renderStrategyCard();
+        setStatus("Alerts enabled. Plan B Radar will surface this caller’s new strategies.", "ok");
+      } catch (error) {
+        setStatus(escapeHtml(error.message || "Could not enable alerts."), "error");
+      }
+    }
 
     // Buy button inside the card: appended to X's flex row, so the sparkline shrinks to make room
     const triggerHost = document.createElement("span");
@@ -1023,7 +1189,15 @@
     // --- state helpers -------------------------------------------------------
     function chain() { return CHAINS[state.chainId]; }
     function mainToken() { return tokenForTicker(ticker.symbol, state.chainId); }
+    // Flash cannot attach a bracket that sells a native EVM gas asset. Quote the
+    // wrapped equivalent so the received asset can be protected atomically.
+    function quoteTargetToken() {
+      return state.attachBracket && !isSolana(state.chainId) && isNativeAddress(tokenOn(state.chainId, mainToken()).address) && tokenOn(state.chainId, "WETH")
+        ? "WETH"
+        : mainToken();
+    }
     function quoteTokens() { return QUOTE_TOKENS.filter((s) => s !== mainToken() && tokenOn(state.chainId, s)); }
+    function selectableQuoteTokens() { return Object.keys(TOKEN_ADDRESSES[state.chainId] || {}).filter((symbol) => symbol !== mainToken()); }
     function payToken() { return state.side === "buy" ? state.quoteToken : mainToken(); }
     function getToken() { return state.side === "buy" ? mainToken() : state.quoteToken; }
     function decimalsOf(symbol) { return tokenOn(state.chainId, symbol).decimals; }
@@ -1065,7 +1239,7 @@
       const request = {
         targetChain: chainName,
         contraChain: chainName,
-        targetAsset: tokenOn(state.chainId, mainToken()).address,
+        targetAsset: tokenOn(state.chainId, quoteTargetToken()).address,
         contraAsset: tokenOn(state.chainId, state.quoteToken).address,
         side: state.side,
         qty: state.amount,
@@ -1075,7 +1249,7 @@
       };
       if (funderAddress) request.funderAddress = funderAddress;
       if (isSolana(state.chainId) && payToken().toUpperCase() === "SOL") request.svmUseNativeSOL = true;
-      if (state.orderType === "limit") request.limitNotionalPrice = state.limitPrice;
+      if (["limit", "twap", "stop", "stop-loss", "take-profit"].includes(state.orderType) && positive(state.limitPrice)) request.limitNotionalPrice = state.limitPrice;
       if (["twap", "dca"].includes(state.orderType)) {
         request.durationSeconds = Number(state.durationSeconds);
         request.twapBucketCount = Number(state.bucketCount);
@@ -1100,7 +1274,9 @@
           stopLoss: { notionalPrice: state.stopPrice },
           takeProfit: { notionalPrice: state.targetPrice },
         };
+        if (state.expireTime) request.attachedBracket.expireTime = state.expireTime;
       }
+      if (state.expireTime && state.orderType !== "market") request.expireTime = state.expireTime;
       return request;
     }
 
@@ -1111,6 +1287,83 @@
       status.innerHTML = html || "";
       status.className = "status" + (kind ? " " + kind : "");
       if (hideAfterMs) statusTimer = setTimeout(() => setStatus(""), hideAfterMs);
+    }
+
+    // Voice is deliberately scoped to this open tweet card. The asset and network
+    // are already selected by the signal, so spoken details can only configure
+    // side/order/protection; they can never redirect a user to another asset.
+    function applyVoiceDetails(result) {
+      const draft = result && result.draft || {};
+      const allowed = ["market", "limit", "twap", "stop", "stop-loss", "take-profit", "bracket", "trailing-stop", "trailing-stop-limit"];
+      if (draft.side === "buy" || draft.side === "sell") state.side = draft.side;
+      if (allowed.includes(draft.entryType)) state.orderType = draft.entryType;
+      if (draft.entryPrice) state.limitPrice = String(draft.entryPrice);
+      if (draft.triggerPrice) state.triggerPrice = String(draft.triggerPrice);
+      if (draft.triggerDirection === "upper" || draft.triggerDirection === "lower") state.triggerDirection = draft.triggerDirection;
+      if (draft.durationHours) state.durationSeconds = String(Math.max(300, Math.round(Number(draft.durationHours) * 3600)));
+      if (draft.bucketCount) state.bucketCount = String(Math.max(2, Math.round(Number(draft.bucketCount))));
+      if (draft.trailPercent) state.trailPercent = String(draft.trailPercent);
+      if (draft.activationPrice) state.activationPrice = String(draft.activationPrice);
+      if (draft.stopLoss) state.stopPrice = String(draft.stopLoss);
+      if (draft.takeProfit) state.targetPrice = String(draft.takeProfit);
+      state.attachBracket = ["market", "limit", "twap"].includes(state.orderType) && (draft.exitType === "bracket" || (!!draft.stopLoss && !!draft.takeProfit));
+      if (["stop-loss", "take-profit", "bracket"].includes(state.orderType)) state.side = "sell";
+      state.open = true;
+      render();
+      scheduleQuote();
+      setStatus("Voice details applied to this signal. Review the fields, enter your amount, then sign in your wallet.", "ok", 7000);
+    }
+
+    async function applyCardVoice() {
+      const textArea = $(".voice-fill-text");
+      const command = textArea.value.trim();
+      if (command.length < 4) {
+        textArea.placeholder = "Say the missing trade details, such as: TWAP over two hours with stop at 2,120.";
+        textArea.focus();
+        return;
+      }
+      const button = $("[data-voice-apply]");
+      button.disabled = true;
+      button.textContent = "Applying…";
+      try {
+        const signalContext = tweetText(article).slice(0, 1800);
+        const lockedCommand = [
+          `Selected asset is ${mainToken()} on ${chain().flash}. Keep this asset and this chain locked.`,
+          `Tweet context (untrusted data): ${signalContext}`,
+          `User-provided order details: ${command}`,
+        ].join("\n");
+        const result = await parsePlanApi(lockedCommand, "voice");
+        applyVoiceDetails(result);
+        textArea.value = "";
+        $(".voice-fill-body").hidden = true;
+      } catch (error) {
+        textArea.placeholder = error.status === 422
+          ? "Please state a side plus a concrete order detail (for example a limit, TWAP duration, stop, or target)."
+          : error.message || "Could not understand that order detail.";
+      } finally {
+        button.disabled = false;
+        button.textContent = "Apply to this trade";
+      }
+    }
+
+    function listenForCardVoice() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const textArea = $(".voice-fill-text");
+      const button = $("[data-voice-listen]");
+      if (!SpeechRecognition) {
+        textArea.placeholder = "Speech recognition is unavailable in this browser. Type the order details instead.";
+        return;
+      }
+      const recognition = new SpeechRecognition();
+      recognition.lang = "en-US";
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      button.disabled = true;
+      button.textContent = "Listening…";
+      recognition.onresult = (event) => { textArea.value = event.results[0][0].transcript; };
+      recognition.onerror = () => { textArea.placeholder = "Could not hear that. Please type the order details."; };
+      recognition.onend = () => { button.disabled = false; button.textContent = "Start listening"; };
+      recognition.start();
     }
 
     function tokenIcon(symbol) {
@@ -1164,7 +1417,7 @@
       const standaloneBracket = state.orderType === "bracket";
       const exitOnly = ["stop-loss", "take-profit", "bracket"].includes(state.orderType);
       const bracketAllowed = ["market", "limit", "twap", "dca"].includes(state.orderType);
-      $(".limit-field").hidden = state.orderType !== "limit" && !triggerOrder;
+      $(".limit-field").hidden = state.orderType !== "limit" && !triggerOrder && !(state.orderType === "twap" && positive(state.limitPrice));
       $(".trigger-field").hidden = !triggerOrder;
       $(".trigger-direction-field").hidden = !triggerOrder || ["stop-loss", "take-profit"].includes(state.orderType);
       $(".duration-field").hidden = !["twap", "dca"].includes(state.orderType);
@@ -1187,7 +1440,7 @@
       // Balance of the pay token (click for max)
       const balanceButton = $(".balance");
       balanceButton.hidden = state.balance === null;
-      if (state.balance !== null) balanceButton.textContent = `Balance ${formatAmount(unitsToNumber(state.balance, decimalsOf(payToken())))}`;
+      if (state.balance !== null) balanceButton.textContent = `Wallet balance ${formatAmount(unitsToNumber(state.balance, decimalsOf(payToken())))}`;
 
       // Output
       const out = $(".out");
@@ -1202,6 +1455,7 @@
 
       // Quote details
       const parts = [];
+      if (state.attachBracket && quoteTargetToken() !== mainToken()) parts.push(`${escapeHtml(mainToken())} entry is received as ${escapeHtml(quoteTargetToken())} so Flash can protect it`);
       if (state.quote && !state.quote.estimated && received > 0) {
         const rate = state.side === "buy" ? payAmount / received : received / payAmount;
         parts.push(`1 ${escapeHtml(mainToken())} = ${formatAmount(rate)} ${escapeHtml(state.quoteToken)}`);
@@ -1232,7 +1486,7 @@
         cta.textContent = `${mainToken()} flagged as unsafe`;
         cta.disabled = true;
       } else if (!activeAccount) {
-        cta.textContent = "Connect wallet";
+        cta.textContent = initialPlan && initialPlan.verified ? "Connect wallet to follow" : "Connect wallet";
         cta.disabled = false;
       } else if (!walletOnChain()) {
         cta.textContent = `Switch to ${chain().name}`;
@@ -1247,7 +1501,7 @@
         cta.textContent = `Not enough ${payToken()}`;
         cta.disabled = true;
       } else {
-        cta.textContent = `${state.orderType === "market" ? "Trade" : "Place"} ${state.orderType.replaceAll("-", " ")} order`;
+        cta.textContent = initialPlan && initialPlan.verified ? "Follow strategy" : compiledStrategy ? "Execute compiled strategy" : `${state.orderType === "market" ? "Trade" : "Place"} ${state.orderType.replaceAll("-", " ")} order`;
         cta.disabled = !state.quote || state.quote.amountOut === null || state.quoting || !!state.quote.estimated;
       }
     }
@@ -1426,6 +1680,39 @@
       render();
     }
 
+    async function loadPickerBalances(symbols) {
+      pickerBalances.clear();
+      if (!walletOnChain()) return;
+      const chainId = state.chainId;
+      const address = accountFor(chainId);
+      try {
+        // Flash returns the wallet inventory across supported chains. It lets the
+        // picker display what the user actually holds, rather than a fake list
+        // of hard-coded balance assumptions.
+        const response = await flashApi("balances", { address }, "GET");
+        const rows = (response.balances || []).filter((row) => row.chain === chain().flash);
+        for (const symbol of symbols) {
+          const token = tokenOn(chainId, symbol);
+          if (!token) continue;
+          const row = rows.find((item) => String(item.address || "").toLowerCase() === String(token.address).toLowerCase())
+            || (isNativeAddress(token.address) && rows.find((item) => item.isNative));
+          if (row && row.balance !== undefined) pickerBalances.set(symbol, parseUnits(String(row.balance), token.decimals));
+        }
+      } catch {
+        // EVM wallets can still read an ERC-20 balance directly if inventory
+        // lookup is unavailable for a particular Flash key or network.
+        await Promise.allSettled(symbols.slice(0, 16).map(async (symbol) => {
+          try { pickerBalances.set(symbol, await tokenBalance(chainId, symbol)); } catch { /* unavailable token remains unlabelled */ }
+        }));
+      }
+    }
+
+    function pickerSubtitle(symbol) {
+      const balance = pickerBalances.get(symbol);
+      const name = (TOKEN_INFO[symbol] || {}).name || symbol;
+      return balance === undefined ? name : `${name} · Wallet ${formatAmount(unitsToNumber(balance, decimalsOf(symbol)))}`;
+    }
+
     // --- actions -------------------------------------------------------------
     // Switching sides keeps the trade the same size: what you'd receive becomes what you pay
     function setSide(side) {
@@ -1469,12 +1756,26 @@
       dropdown.close();
     }
 
-    function openTokenMenu(anchor) {
+    async function openTokenMenu(anchor) {
+      const known = selectableQuoteTokens();
+      await loadPickerBalances(known);
+      const toItem = (symbol) => ({ id: symbol, iconHtml: tokenLogoHtml(symbol), title: symbol, subtitle: pickerSubtitle(symbol) });
       dropdown.open({
         anchor,
         themeVars,
+        title: "Choose payment / receive asset",
         selected: state.quoteToken,
-        items: quoteTokens().map((symbol) => ({ id: symbol, iconHtml: tokenLogoHtml(symbol), title: symbol, subtitle: (TOKEN_INFO[symbol] || {}).name || symbol })),
+        items: known.map(toItem),
+        search: {
+          placeholder: `Search Flash assets on ${chain().name}`,
+          onSearch: async (query) => {
+            const response = await flashApi("search", { query, chain: chain().flash, limit: 10 }, "GET");
+            const matches = (response.assets || []).filter((asset) => asset.address && asset.symbol && Number.isInteger(Number(asset.decimals)));
+            const symbols = matches.map(registerSelectableFlashAsset).filter((symbol) => symbol && symbol !== mainToken());
+            await loadPickerBalances(symbols);
+            return symbols.map((symbol) => ({ id: symbol, iconHtml: tokenLogoHtml(symbol), title: symbol, subtitle: pickerSubtitle(symbol) }));
+          },
+        },
         onSelect: (symbol) => {
           if (symbol === state.quoteToken) return;
           state.quoteToken = symbol;
@@ -1636,12 +1937,16 @@
         state.orderId = placed.orderId;
         plansApi("create", {
           orderId: placed.orderId,
+          signalId: initialPlan && initialPlan.signalId || null,
+          strategyVersion: initialPlan && initialPlan.strategyVersion || compiledStrategy && compiledStrategy.version || 1,
           tweetId: tweetId(article),
           authorHandle: author,
           funderAddress: funder,
           token: mainToken(),
           chain: chain().flash,
           planType: `${state.orderType}${state.attachBracket ? "+bracket" : ""}`,
+          strategyType: compiledStrategy && compiledStrategy.strategyType || null,
+          strategy: compiledStrategy,
           stopLoss: state.attachBracket ? state.stopPrice : null,
           takeProfit: state.attachBracket ? state.targetPrice : null,
         }).then(loadSocialProof, (error) => console.warn("[Plan B] Could not record social plan:", error.message));
@@ -1711,6 +2016,15 @@
       const target = event.target;
       const riskButton = target.closest("[data-risk]");
       if (riskButton) { answerRisk(riskButton.dataset.risk === "continue"); return; }
+      if (target.closest("[data-follow-strategy]")) { subscribeToStrategy(); return; }
+      if (target.closest(".voice-fill-toggle")) {
+        const body = $(".voice-fill-body");
+        body.hidden = !body.hidden;
+        if (!body.hidden) $(".voice-fill-text").focus();
+        return;
+      }
+      if (target.closest("[data-voice-listen]")) { listenForCardVoice(); return; }
+      if (target.closest("[data-voice-apply]")) { applyCardVoice(); return; }
       if (state.busy) return;
       const walletButton = target.closest(".wallet");
       if (walletButton) {
@@ -1780,6 +2094,20 @@
         state.triggerDirection = target.value;
       } else if (target.matches(".attach-bracket")) {
         state.attachBracket = target.checked;
+      } else if (target.matches(".copy-mode")) {
+        state.copyMode = target.value;
+        if (state.copyMode === "twap") {
+          state.orderType = "twap";
+          state.durationSeconds = state.durationSeconds || "3600";
+          state.bucketCount = state.bucketCount || "12";
+        } else if (state.copyMode === "limit") {
+          state.orderType = "limit";
+          const current = tickerPrice();
+          const drift = Math.max(0.1, Number(state.maxDrift) || 3) / 100;
+          if (current > 0) state.limitPrice = String(state.side === "buy" ? current * (1 + drift) : current * (1 - drift));
+        } else if (compiledStrategy && compiledStrategy.entry && compiledStrategy.entry.orderType) {
+          state.orderType = compiledStrategy.entry.orderType;
+        }
       } else {
         return;
       }
@@ -1793,10 +2121,16 @@
         ["limit-price", "limitPrice"], ["trigger-price", "triggerPrice"], ["duration", "durationSeconds"],
         ["buckets", "bucketCount"], ["trail", "trailPercent"], ["activation", "activationPrice"],
         ["stop-price", "stopPrice"], ["target-price", "targetPrice"],
+        ["max-drift", "maxDrift"],
       ]);
       const className = [...fields.keys()].find((name) => event.target.classList && event.target.classList.contains(name));
       if (!className) return;
       state[fields.get(className)] = event.target.value.trim();
+      if (className === "max-drift" && state.copyMode === "limit") {
+        const current = tickerPrice();
+        const drift = Math.max(0.1, Number(state.maxDrift) || 3) / 100;
+        if (current > 0) state.limitPrice = String(state.side === "buy" ? current * (1 + drift) : current * (1 - drift));
+      }
       setStatus("");
       scheduleQuote();
       render();
@@ -1807,6 +2141,7 @@
     host.addEventListener("plan-b:wallet", () => { followWalletChain(); refreshBalance(); render(); });
     checkSecurity(); // verdicts are cached per token (here and in the backend), so cards scrolling by stay cheap
     loadSocialProof();
+    loadStrategyRoom();
     socialTimer = setInterval(() => host.isConnected ? loadSocialProof() : clearInterval(socialTimer), 15000);
     // Keep the card-price line current while no quote is shown
     new MutationObserver(() => { if (!state.quote && !state.busy) render(); }).observe(link, { childList: true, characterData: true, subtree: true });
@@ -1827,6 +2162,125 @@
     return (article.querySelector('[data-testid="tweetText"]')?.innerText || "").trim();
   }
 
+  function escapeRegex(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  // Avoid putting a trading action on ordinary posts. Cashtags and contract
+  // addresses are unambiguous; bare symbols must preserve their market casing
+  // (ETH/cbBTC) so words such as "link" or "op" do not become false positives.
+  function tweetHasTokenMention(text) {
+    if (/\$[A-Za-z][A-Za-z0-9]{1,14}\b/.test(text)) return true;
+    if (/\b0x[a-fA-F0-9]{40}\b/.test(text)) return true;
+    if (/(?:^|\s)[1-9A-HJ-NP-Za-km-z]{32,44}(?=$|\s|[.,;:!?])/.test(text)) return true;
+
+    const symbols = Object.keys(TICKER_TO_TOKENS);
+    if (symbols.some((symbol) => new RegExp(`(?:^|[^A-Za-z0-9])${escapeRegex(symbol)}(?=$|[^A-Za-z0-9])`).test(text))) return true;
+
+    const names = [...new Set([
+      ...Object.values(TOKEN_INFO).map((token) => token.name),
+      "Ethereum", "Bitcoin", "Solana", "Avalanche", "BNB", "Polygon", "Hyperliquid",
+    ].filter((name) => name && name.length >= 3))];
+    return names.some((name) => new RegExp(`(?:^|[^A-Za-z0-9])${escapeRegex(name)}(?=$|[^A-Za-z0-9])`, "i").test(text));
+  }
+
+  function tweetHasTradeIntent(text) {
+    // Never offer a mainnet trade action on distribution/test posts even when
+    // they contain a valid ticker or contract address.
+    if (/\b(?:testnet|faucet|airdrop|giveaway|claim|drip)\b/i.test(text)) return false;
+
+    // Ignore handles, hashtags and URLs when looking for intent. This prevents
+    // names such as @faucet_trade or faucet.trade from looking like signals.
+    const semantic = text
+      .replace(/https?:\/\/\S+/gi, " ")
+      .replace(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/\S*)?/gi, " ")
+      .replace(/@[A-Za-z0-9_]+|#[A-Za-z0-9_]+/g, " ");
+
+    // A price prediction alone is commentary, not a signal. Require a clear
+    // direction that a user could choose to follow: "Buy ETH", "short SOL",
+    // "trim BTC", etc. The parser can subsequently decide whether it has
+    // enough entry/protection detail to produce a plan.
+    return /\b(?:buy|sell|long|short|enter|exit|accumulate|accumulating|trim|close|reduce|ape|aping)\b/i.test(semantic);
+  }
+
+  function hasVerifiedCallerCard(text) {
+    return /\bplanb:[a-f0-9-]{36}\b/i.test(text);
+  }
+
+  function tweetIsTradeCandidate(text) {
+    // A signed Plan B card is deliberately allowed even if the visible tweet
+    // text is short; its stored, signed strategy is the source of truth.
+    return hasVerifiedCallerCard(text) || (tweetHasTokenMention(text) && tweetHasTradeIntent(text));
+  }
+
+  // Manual mode is deliberately deterministic. It only carries across the
+  // asset (and an explicitly named network), never a direction, size, leverage,
+  // entry price, or target inferred from an informational post.
+  function manualTickerFromTweet(text) {
+    const cashtag = text.match(/\$([A-Za-z][A-Za-z0-9]{1,14})\b/);
+    if (cashtag) return cashtag[1].toUpperCase();
+    const known = Object.keys(TICKER_TO_TOKENS).find((symbol) =>
+      new RegExp(`(?:^|[^A-Za-z0-9])${escapeRegex(symbol)}(?=$|[^A-Za-z0-9])`).test(text)
+    );
+    if (known) return known;
+    const names = { ethereum: "ETH", bitcoin: "BTC", solana: "SOL", avalanche: "AVAX", polygon: "POL", "bnb chain": "BNB", bnb: "BNB", hyperliquid: "HYPE" };
+    const name = Object.keys(names).find((value) => new RegExp(`(?:^|[^A-Za-z0-9])${escapeRegex(value)}(?=$|[^A-Za-z0-9])`, "i").test(text));
+    return name ? names[name] : null;
+  }
+
+  function manualChainFromTweet(text) {
+    const hints = ["base", "ethereum", "arbitrum", "optimism", "avalanche", "bsc", "polygon", "solana", "monad", "hyperevm", "ink", "plasma", "robinhood", "arc"];
+    const hint = hints.find((value) => new RegExp(`(?:^|[^A-Za-z0-9])${escapeRegex(value)}(?=$|[^A-Za-z0-9])`, "i").test(text));
+    return hint && FLASH_TO_CHAIN[hint];
+  }
+
+  async function createManualTradeCard(article, text) {
+    const requestedTicker = manualTickerFromTweet(text);
+    if (!requestedTicker) throw new Error("Choose a token from the Plan B order panel to trade manually.");
+    await discoverTicker(requestedTicker);
+    const availableChains = chainsForTicker(requestedTicker);
+    if (!availableChains.length) throw new Error(`${requestedTicker} is not available through Flash right now.`);
+    const hintedChain = manualChainFromTweet(text);
+    const chainId = hintedChain && availableChains.includes(hintedChain)
+      ? hintedChain
+      : availableChains.includes(DEFAULT_CHAIN) ? DEFAULT_CHAIN : availableChains[0];
+    const selectedToken = tokenForTicker(requestedTicker, chainId);
+    // Read the exact Flash result selected for this chain—not the global symbol
+    // cache—so ETH on Base cannot inherit price/liquidity from an unrelated ETH.
+    const selectedAsset = tokenOn(chainId, selectedToken);
+    const tokenInfo = { ...(TOKEN_INFO[selectedToken] || TOKEN_INFO[requestedTicker] || {}), ...(selectedAsset && selectedAsset.liquidity !== undefined ? selectedAsset : {}) };
+    const price = Number(tokenInfo.price) || 0;
+
+    article.querySelector('[data-plan-b-draft]')?.remove();
+    const wrap = document.createElement("div");
+    wrap.setAttribute("data-plan-b-draft", "");
+    wrap.style.cssText = "margin:10px 0 2px;max-width:100%;";
+    const card = document.createElement("div");
+    card.style.cssText = "display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid color-mix(in srgb,currentColor 18%,transparent);border-radius:12px;font:inherit;";
+    const icon = tokenInfo.imageUrl && /^https:\/\//.test(tokenInfo.imageUrl)
+      ? `<img src="${escapeHtml(tokenInfo.imageUrl)}" alt="" style="width:30px;height:30px;border-radius:50%;object-fit:cover">`
+      : `<span style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#536471;color:white;font-weight:700">${escapeHtml(selectedToken.slice(0, 1))}</span>`;
+    card.innerHTML = `${icon}<span style="display:flex;flex-direction:column;min-width:0"><b class="plan-name">${escapeHtml(tokenInfo.name || selectedToken)}</b><span class="plan-symbol" style="opacity:.65;font-size:13px">${escapeHtml(selectedToken)} · ${escapeHtml(CHAINS[chainId].name)} · Manual review</span></span><span class="plan-price" style="margin-left:auto;font-weight:700">${price ? formatUsd(price) : "Flash asset"}</span>`;
+    wrap.appendChild(card);
+    const actionBar = article.querySelector('[data-testid="reply"]')?.closest('[role="group"]');
+    (actionBar || article.lastElementChild || article).after(wrap);
+    try {
+      const panel = createPanel(article, card, {
+        symbol: requestedTicker,
+        name: tokenInfo.name || selectedToken,
+        price,
+        priceSpan: card.querySelector(".plan-price"),
+        iconSrc: tokenInfo.imageUrl || null,
+        nameSpan: card.querySelector(".plan-name"),
+        symbolSpan: card.querySelector(".plan-symbol"),
+      }, { manual: true, asset: { chain: CHAINS[chainId].flash }, draft: { side: "buy", entryType: "market" } });
+      wrap.appendChild(panel);
+    } catch (error) {
+      wrap.remove();
+      throw error;
+    }
+  }
+
   function createParsedPlanCard(article, result) {
     article.querySelector('[data-plan-b-draft]')?.remove();
     registerFlashAsset(result.asset);
@@ -1844,6 +2298,8 @@
       : `<span style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#1d9bf0;color:white;font-weight:700">${escapeHtml(symbol.slice(0, 1))}</span>`;
     card.innerHTML = `${icon}<span style="display:flex;flex-direction:column;min-width:0"><b class="plan-name">${escapeHtml(result.asset.name || symbol)}</b><span class="plan-symbol" style="opacity:.65;font-size:13px">${escapeHtml(symbol)} · ${escapeHtml(CHAINS[FLASH_TO_CHAIN[result.asset.chain]]?.name || result.asset.chain)}</span></span><span class="plan-price" style="margin-left:auto;font-weight:700">${price ? formatUsd(price) : "Flash asset"}</span>`;
     wrap.appendChild(card);
+    const actionBar = article.querySelector('[data-testid="reply"]')?.closest('[role="group"]');
+    (actionBar || article.lastElementChild || article).after(wrap);
     const ticker = {
       symbol: symbol.toUpperCase(),
       name: result.asset.name || symbol,
@@ -1853,29 +2309,33 @@
       nameSpan: card.querySelector(".plan-name"),
       symbolSpan: card.querySelector(".plan-symbol"),
     };
-    const panel = createPanel(article, card, ticker, {
-      ...result,
-      context: { tweetId: tweetId(article), authorHandle: tweetAuthor(article) },
-    });
-    wrap.appendChild(panel);
-    const actionBar = article.querySelector('[data-testid="reply"]')?.closest('[role="group"]');
-    (actionBar || article.lastElementChild || article).after(wrap);
+    try {
+      const panel = createPanel(article, card, ticker, {
+        ...result,
+        context: { tweetId: tweetId(article), authorHandle: tweetAuthor(article) },
+      });
+      wrap.appendChild(panel);
+    } catch (error) {
+      wrap.remove();
+      throw error;
+    }
     return wrap;
   }
 
   function attachPlanButton(article) {
     const text = tweetText(article);
-    if (!text) return;
     const actionBar = article.querySelector('[data-testid="reply"]')?.closest('[role="group"]');
-    if (!actionBar || actionBar.querySelector('[data-plan-b-make-plan]')) return;
+    const existing = actionBar && actionBar.querySelector('[data-plan-b-make-plan]');
+    if (!text || !tweetIsTradeCandidate(text)) { existing?.remove(); return; }
+    if (!actionBar || existing) return;
 
     const host = document.createElement("span");
     host.setAttribute("data-plan-b-make-plan", "");
-    host.style.cssText = "display:inline-flex;align-items:center;flex:0 0 auto;";
+    host.style.cssText = "display:inline-flex;align-items:center;flex:0 0 auto;margin-left:8px;";
     const root = host.attachShadow({ mode: "open" });
     root.innerHTML = `<style>
-      :host{all:initial}.make{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:0;border-radius:999px;background:transparent;color:rgb(83,100,113);font:600 12px system-ui;cursor:pointer}.make:hover{color:rgb(0,186,124);background:rgba(0,186,124,.1)}.make:disabled{opacity:.65;cursor:wait}.dot{width:7px;height:7px;border-radius:50%;background:rgb(0,186,124)}
-    </style><button class="make" type="button"><span class="dot"></span><span>Make plan</span></button>`;
+      :host{all:initial}.make{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 15px;border:1px solid rgb(0,186,124);border-radius:999px;background:rgb(0,186,124);color:#03140d;box-shadow:0 4px 14px rgba(0,186,124,.22);font:750 13px system-ui,-apple-system,sans-serif;letter-spacing:-.01em;white-space:nowrap;cursor:pointer;transition:transform .15s ease,filter .15s ease,box-shadow .15s ease}.make:hover{filter:brightness(1.08);transform:translateY(-1px);box-shadow:0 6px 18px rgba(0,186,124,.3)}.make:active{transform:translateY(0)}.make:disabled{opacity:.72;cursor:wait;transform:none}.mark{width:16px;height:16px;display:grid;place-items:center;border-radius:5px;background:#03140d;color:rgb(0,186,124);font:900 11px/1 system-ui}
+    </style><button class="make" type="button" title="Parse this signal into an editable plan. Nothing is submitted yet."><span class="mark">↗</span><span>${hasVerifiedCallerCard(text) ? "Follow strategy" : "Parse trade"}</span></button>`;
     const button = root.querySelector("button");
     host.addEventListener("click", (event) => event.stopPropagation());
     button.addEventListener("click", async (event) => {
@@ -1883,16 +2343,35 @@
       event.stopPropagation();
       if (button.disabled) return;
       button.disabled = true;
-      button.lastElementChild.textContent = "Reading plan…";
+      button.lastElementChild.textContent = "Parsing signal…";
       try {
         const result = await parsePlanApi(text);
         await discoverTicker(result.asset.symbol);
         createParsedPlanCard(article, result);
-        button.lastElementChild.textContent = "Plan ready";
+        button.lastElementChild.textContent = "Ready to review";
       } catch (error) {
-        button.lastElementChild.textContent = error.message || "No clear plan";
-        button.title = error.details ? `${(error.details.missing || []).join(", ")} ${(error.details.ambiguous || []).join(", ")}`.trim() : error.message;
-        setTimeout(() => { button.disabled = false; button.lastElementChild.textContent = "Make plan"; }, 3500);
+        if (error.status === 422) {
+          // A contextual post still deserves a useful next step. Open manual
+          // mode on this same click, with no model-inferred order parameters.
+          button.lastElementChild.textContent = "Opening manual trade…";
+          try {
+            await createManualTradeCard(article, text);
+            button.lastElementChild.textContent = "Manual trade ready";
+            button.title = "Manual trade: this post was context, not an executable signal.";
+            button.disabled = false;
+            return;
+          } catch (manualError) {
+            button.lastElementChild.textContent = "Manual trade unavailable";
+            button.title = manualError.message || "Plan B could not open this trade.";
+          }
+        } else {
+          button.lastElementChild.textContent = "Could not analyze";
+          button.title = error.message || "Plan B could not open this trade.";
+        }
+        setTimeout(() => {
+          button.disabled = false;
+          button.lastElementChild.textContent = hasVerifiedCallerCard(text) ? "Follow strategy" : "Parse trade";
+        }, 3500);
         return;
       }
       button.disabled = false;
@@ -1906,7 +2385,7 @@
     host.setAttribute("data-plan-b-orders", "");
     const root = host.attachShadow({ mode: "open" });
     root.innerHTML = `<style>
-      :host{all:initial;font-family:system-ui;color:#e7e9ea}.launcher{position:fixed;right:22px;bottom:22px;z-index:2147483645;border:0;border-radius:999px;background:#7bf38b;color:#071109;font:700 13px system-ui;padding:11px 16px;box-shadow:0 10px 35px #0008;cursor:pointer}.drawer{position:fixed;right:18px;bottom:72px;z-index:2147483646;width:min(390px,calc(100vw - 24px));max-height:min(680px,calc(100vh - 100px));display:none;flex-direction:column;background:#080b09;border:1px solid #29322c;border-radius:18px;box-shadow:0 24px 70px #000b;overflow:hidden}.drawer.open{display:flex}.head{display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid #202622}.head b{font-size:17px}.close{border:0;background:none;color:#88938c;font-size:22px;cursor:pointer}.tabs{display:grid;grid-template-columns:repeat(3,1fr);padding:8px;border-bottom:1px solid #202622}.tab{border:0;background:none;color:#88938c;padding:9px;font:700 12px system-ui;cursor:pointer;border-radius:9px}.tab.on{background:#182019;color:#7bf38b}.list{overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px}.empty{padding:30px 18px;text-align:center;color:#88938c;font-size:13px}.row{border:1px solid #202622;border-radius:12px;padding:12px;display:grid;gap:8px}.top{display:flex;justify-content:space-between;gap:10px}.token{font-weight:800}.state{font-size:11px;text-transform:uppercase;color:#7bf38b}.meta{color:#88938c;font-size:12px}.actions{display:flex;gap:7px;flex-wrap:wrap}.actions button,.actions a{border:1px solid #334038;background:none;color:#e7e9ea;border-radius:999px;padding:7px 10px;font:700 11px system-ui;text-decoration:none;cursor:pointer}.actions .danger{border-color:#713b3b;color:#ff8d8d}.actions .share{border-color:#315f41;color:#7bf38b}.notice{padding:10px 16px;color:#88938c;font-size:12px;border-top:1px solid #202622}.error{color:#ff8d8d}
+      :host{all:initial;font-family:system-ui;color:#e7e9ea}.launcher{position:fixed;z-index:2147483645;border:0;border-radius:999px;font:700 13px system-ui;box-shadow:0 10px 35px #0008;cursor:pointer;right:22px;bottom:22px;background:#7bf38b;color:#071109;padding:11px 16px}.drawer{position:fixed;right:18px;bottom:72px;z-index:2147483646;width:min(390px,calc(100vw - 24px));max-height:min(680px,calc(100vh - 100px));display:none;flex-direction:column;background:#080b09;border:1px solid #29322c;border-radius:18px;box-shadow:0 24px 70px #000b;overflow:hidden}.drawer.open{display:flex}.head{display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid #202622}.head b{font-size:17px}.close{border:0;background:none;color:#88938c;font-size:22px;cursor:pointer}.tabs{display:grid;grid-template-columns:repeat(3,1fr);padding:8px;border-bottom:1px solid #202622}.tab{border:0;background:none;color:#88938c;padding:9px;font:700 12px system-ui;cursor:pointer;border-radius:9px}.tab.on{background:#182019;color:#7bf38b}.list{overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px}.empty{padding:30px 18px;text-align:center;color:#88938c;font-size:13px}.row{border:1px solid #202622;border-radius:12px;padding:12px;display:grid;gap:8px}.top{display:flex;justify-content:space-between;gap:10px}.token{font-weight:800}.state{font-size:11px;text-transform:uppercase;color:#7bf38b}.meta{color:#88938c;font-size:12px}.actions{display:flex;gap:7px;flex-wrap:wrap}.actions button,.actions a{border:1px solid #334038;background:none;color:#e7e9ea;border-radius:999px;padding:7px 10px;font:700 11px system-ui;text-decoration:none;cursor:pointer}.actions .danger{border-color:#713b3b;color:#ff8d8d}.actions .share{border-color:#315f41;color:#7bf38b}.notice{padding:10px 16px;color:#88938c;font-size:12px;border-top:1px solid #202622}.error{color:#ff8d8d}
     </style><button class="launcher">Plan B orders</button><section class="drawer" aria-label="Plan B orders"><div class="head"><b>Your plans</b><button class="close" aria-label="Close">×</button></div><div class="tabs"><button class="tab on" data-tab="open">Open</button><button class="tab" data-tab="filled">Filled</button><button class="tab" data-tab="cancelled">Cancelled</button></div><div class="list"></div><div class="notice">Connect a wallet in a Plan B card to load its orders.</div></section>`;
     document.body.appendChild(host);
     const drawer = root.querySelector(".drawer");

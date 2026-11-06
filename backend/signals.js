@@ -30,10 +30,15 @@ function canonicalMessage(result) {
     `Token: ${plan.token}`,
     `Chain: ${plan.chain}`,
     `Side: ${plan.side}`,
+    `Strategy: ${result.strategy.strategyType}`,
     `Entry: ${plan.entryType}${plan.entryPrice ? ` @ ${plan.entryPrice}` : ''}`,
+    `Trigger: ${plan.triggerPrice ? `${plan.triggerDirection} @ ${plan.triggerPrice}` : 'none'}`,
+    `Exit: ${plan.exitType || 'none'}`,
     `Stop: ${plan.stopLoss || 'none'}`,
     `Target: ${plan.takeProfit || 'none'}`,
+    `Trail Percent: ${plan.trailPercent || 'none'}`,
     `Duration Hours: ${plan.durationHours || 'none'}`,
+    `Expiry Hours: ${plan.expiryHours || 'none'}`,
   ].join('\n')
 }
 
@@ -64,14 +69,21 @@ async function createSignalCtrl(req, res) {
       signer,
       signature,
       verified: true,
+      version: 1,
       createdAt: new Date().toISOString(),
     }
     signals.push(signal)
     saveSignals()
     const action = result.draft.side === 'buy' ? 'Buy' : 'Sell'
-    const entry = result.draft.entryType === 'market' ? 'at market' : `${result.draft.entryType} at ${result.draft.entryPrice || 'market'}`
-    const protection = result.draft.stopLoss && result.draft.takeProfit ? ` · stop ${result.draft.stopLoss} · target ${result.draft.takeProfit}` : ''
-    res.status(201).json({ signal, tweetText: `${action} $${result.draft.token} on ${result.draft.chain} ${entry}${protection}\n\nVerified Plan B caller card · planb:${id}` })
+    const entry = result.draft.entryType === 'market'
+      ? 'at market'
+      : result.draft.entryType === 'twap'
+        ? `over ${result.draft.durationHours}h${result.draft.entryPrice ? ` below ${result.draft.entryPrice}` : ''}`
+        : result.draft.entryType === 'stop'
+          ? `when price crosses ${result.draft.triggerDirection} ${result.draft.triggerPrice}`
+          : `${result.draft.entryType} at ${result.draft.entryPrice || result.draft.triggerPrice || 'market'}`
+    const protection = result.draft.stopLoss && result.draft.takeProfit ? ` · stop ${result.draft.stopLoss} · target ${result.draft.takeProfit}` : result.draft.trailPercent ? ` · trail ${result.draft.trailPercent}%` : ''
+    res.status(201).json({ signal, tweetText: `${action} $${result.draft.token} on ${result.draft.chain} ${entry}${protection}\n\nFollow this ${result.strategy.summary} strategy on Plan B · planb:${id}` })
   } catch (error) {
     res.status(Number(error.status) || 422).json({ error: 'InvalidPlan', message: error.message })
   }
@@ -81,10 +93,14 @@ function getSignal(id) {
   return signals.find((signal) => signal.id === id) || null
 }
 
+function listSignals() {
+  return signals.filter((signal) => signal && signal.verified)
+}
+
 function getSignalCtrl(req, res) {
   const signal = getSignal(String(req.params.id || ''))
   if (!signal) return res.status(404).json({ error: 'NotFound', message: 'Caller plan not found.' })
   res.json({ signal })
 }
 
-module.exports = { prepareSignalCtrl, createSignalCtrl, getSignalCtrl, getSignal }
+module.exports = { prepareSignalCtrl, createSignalCtrl, getSignalCtrl, getSignal, listSignals }
