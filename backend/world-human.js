@@ -120,7 +120,6 @@ async function verifyCtrl(req, res) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(environment() === 'staging' && process.env.WORLD_STAGING_TOKEN ? { 'x-staging-verification-token': process.env.WORLD_STAGING_TOKEN } : {}),
       },
       // World asks that the completed IDKit result is forwarded unmodified.
       body: JSON.stringify(result),

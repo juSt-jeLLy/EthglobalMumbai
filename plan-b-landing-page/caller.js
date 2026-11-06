@@ -4,7 +4,6 @@
   const status = document.querySelector("#caller-status");
   const result = document.querySelector("#caller-result");
   const tweet = document.querySelector("#caller-tweet");
-  const submit = form.querySelector("button[type=submit]");
   const entrySelect = form.querySelector("#caller-entry");
   const humanTitle = document.querySelector("#human-title");
   const humanCopy = document.querySelector("#human-copy");
@@ -16,8 +15,17 @@
   const worldCopy = document.querySelector("#world-copy");
   const worldConnectorTitle = document.querySelector("#world-connector-title");
   const worldConnectorCopy = document.querySelector("#world-connector-copy");
+  const BASE_CHAIN_ID = "0x2105";
+  const BASE_NETWORK = {
+    chainId: BASE_CHAIN_ID,
+    chainName: "Base",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: ["https://mainnet.base.org"],
+    blockExplorerUrls: ["https://basescan.org"],
+  };
   let currentSignal = null;
   let worldState = { configured: false, required: false, humanVerification: null, signer: null };
+  let worldError = "";
   const sideSelect = form.querySelector('[name="side"]');
   const exitOrderTypes = new Set(["stop-loss", "take-profit", "bracket", "trailing-stop", "trailing-stop-limit"]);
 
@@ -41,8 +49,24 @@
     return data;
   };
 
+  const ensureBaseNetwork = async () => {
+    const currentChainId = await window.ethereum.request({ method: "eth_chainId" });
+    if (String(currentChainId).toLowerCase() === BASE_CHAIN_ID) return;
+    try {
+      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_ID }] });
+    } catch (error) {
+      if (error && Number(error.code) !== 4902) throw error;
+      await window.ethereum.request({ method: "wallet_addEthereumChain", params: [BASE_NETWORK] });
+      await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: BASE_CHAIN_ID }] });
+    }
+  };
+
   const connectedSigner = async () => {
     if (!window.ethereum) throw new Error("Install an EVM wallet such as MetaMask to create a caller card.");
+    // Caller Cards and World proof enrollment are message signatures, but
+    // keeping the connected wallet on Base makes the social-card flow match
+    // the Base Flash execution path and avoids a misleading Sepolia context.
+    await ensureBaseNetwork();
     const [signer] = await window.ethereum.request({ method: "eth_requestAccounts" });
     if (!signer) throw new Error("Connect a wallet to continue.");
     return signer.toLowerCase();
@@ -71,10 +95,11 @@
       return;
     }
     if (worldState.configured) {
-      humanTitle.textContent = worldState.required ? "Proof of Human required" : "Add a Verified Human badge";
-      humanCopy.textContent = worldState.required
+      humanTitle.textContent = worldError ? "World verification needs attention" : worldState.required ? "Proof of Human required" : "Add a Verified Human badge";
+      const defaultCopy = worldState.required
         ? "Verify once with World ID before publishing. It proves uniqueness, not your identity or X-handle ownership."
         : "Optionally verify with World ID to add unique-human authenticity to your Caller Cards.";
+      humanCopy.textContent = worldError || defaultCopy;
       primaryAction.textContent = worldState.required ? "Verify humanity to continue" : "Validate and sign strategy";
       primaryAction.type = worldState.required ? "button" : "submit";
       primaryAction.disabled = false;
@@ -92,6 +117,16 @@
     worldState = { ...worldState, ...(await request(`/world/status${query}`, undefined, "GET")), signer };
     renderWorldState();
     return worldState;
+  }
+
+  // Do not make a previously verified caller repeat the World flow. Reading
+  // eth_accounts is silent (unlike eth_requestAccounts), so we can restore the
+  // verification badge when the page opens without prompting MetaMask.
+  async function refreshConnectedWorldState() {
+    if (!window.ethereum) return;
+    const accounts = await window.ethereum.request({ method: "eth_accounts" });
+    const signer = accounts && accounts[0] ? String(accounts[0]).toLowerCase() : null;
+    if (signer) await refreshWorldState(signer);
   }
 
   function showWorldQr(uri, environment) {
@@ -121,6 +156,7 @@
 
   async function beginHumanVerification() {
     try {
+      worldError = "";
       const signer = await connectedSigner();
       const current = await refreshWorldState(signer);
       if (current.humanVerification) return;
@@ -151,7 +187,8 @@
       renderWorldState();
     } catch (error) {
       worldConnector.hidden = true;
-      humanCopy.textContent = error.message;
+      worldError = `Verification did not complete: ${error.message}`;
+      console.error("[Plan B] World verification failed:", error);
     } finally {
       renderWorldState();
     }
@@ -165,15 +202,24 @@
     await beginHumanVerification();
   });
 
-  refreshWorldState().catch(() => {
-    humanTitle.textContent = "Caller authenticity unavailable";
-    humanCopy.textContent = "The local backend is not running, so World verification status cannot be checked.";
+  refreshWorldState()
+    .then(refreshConnectedWorldState)
+    .catch(() => {
+      humanTitle.textContent = "Caller authenticity unavailable";
+      humanCopy.textContent = "The local backend is not running, so World verification status cannot be checked.";
+    });
+  window.ethereum?.on?.("accountsChanged", (accounts) => {
+    worldError = "";
+    const signer = accounts && accounts[0] ? String(accounts[0]).toLowerCase() : null;
+    refreshWorldState(signer).catch(() => {});
   });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     result.hidden = true;
-    submit.disabled = true;
+    // The same primary CTA is a verification button before World succeeds and
+    // a submit button afterwards, so do not cache a type=submit lookup.
+    primaryAction.disabled = true;
     status.textContent = "Validating with Flash…";
     try {
       const signer = await connectedSigner();
@@ -213,12 +259,41 @@
       status.textContent = `${callerStatus} strategy ready: ${prepared.strategy.summary}.`;
     } catch (error) {
       status.textContent = /reject|denied/i.test(error.message) ? "Signature cancelled in wallet." : error.message;
-    } finally { submit.disabled = false; }
+    } finally { primaryAction.disabled = false; }
   });
 
   document.querySelector("#copy-tweet").addEventListener("click", async () => {
     await navigator.clipboard.writeText(tweet.value);
     document.querySelector("#copy-tweet").textContent = "Copied";
+  });
+
+  function parseXPostUrl(value) {
+    const match = String(value || "").trim().match(/^(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/([a-z0-9_]{1,30})\/status\/(\d+)(?:[/?#].*)?$/i);
+    return match ? { authorHandle: match[1].toLowerCase(), tweetId: match[2] } : null;
+  }
+
+  document.querySelector("#attach-source").addEventListener("click", async () => {
+    const sourceInput = document.querySelector("#source-url");
+    const sourceStatus = document.querySelector("#source-status");
+    const attach = document.querySelector("#attach-source");
+    if (!currentSignal) return;
+    const source = parseXPostUrl(sourceInput.value);
+    if (!source) {
+      sourceStatus.textContent = "Paste the public URL of this post, for example x.com/yourhandle/status/123…";
+      return;
+    }
+    attach.disabled = true;
+    sourceStatus.textContent = "Linking this public post to the signed Passport…";
+    try {
+      const attached = await request(`/signals/${encodeURIComponent(currentSignal.id)}/source`, { context: source });
+      currentSignal.passport = attached.passport || currentSignal.passport;
+      sourceStatus.textContent = "Public post attached. Plan B will continue checking its availability and source evidence.";
+      attach.textContent = "Post attached";
+    } catch (error) {
+      sourceStatus.textContent = error.message;
+    } finally {
+      attach.disabled = false;
+    }
   });
 
   document.querySelector("#publish-revision").addEventListener("click", async () => {
