@@ -180,7 +180,7 @@
     const previous = TOKEN_ADDRESSES[chainId][symbol];
     const previousLiquidity = previous && previous[2] ? Number(previous[2].liquidity || 0) : -1;
     if (!previous || Number(asset.liquidity || 0) >= previousLiquidity) {
-      TOKEN_ADDRESSES[chainId][symbol] = [asset.address, asset.decimals, { ...asset }];
+      TOKEN_ADDRESSES[chainId][symbol] = [asset.address, asset.decimals ?? (previous && previous[1]), { ...asset }];
     }
     TOKEN_INFO[symbol] = {
       ...(TOKEN_INFO[symbol] || {}),

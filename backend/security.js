@@ -40,7 +40,7 @@ async function jsonRequest(url, options = {}) {
 
 async function flashAssessment(chain, address) {
   const cached = getCachedFlashAsset(FLASH_CHAINS[chain], address)
-  if (cached) return cached
+  if (cached && cached.discoverySource !== 'dexscreener') return cached
   const response = await flashRequest('GET', '/search', { query: address, chain: FLASH_CHAINS[chain], limit: 25 })
   const body = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(`Flash returned ${response.status}`)

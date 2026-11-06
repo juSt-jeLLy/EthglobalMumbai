@@ -15,6 +15,7 @@ Plan B is a Chrome extension that turns trading signals on X into editable, non-
 - **Share receipts:** resolved plans expose a pre-filled “Share receipt on X” action.
 - **Caller Cards:** `plan-b-landing-page/caller.html` lets a caller validate and sign a structured plan. The generated tweet contains a `planb:<id>` reference that the extension recognizes as verified.
 - **Pre-trade security gate:** Plan B combines Flash risk data, GoPlus token analysis and Honeypot sell simulation where supported. Critical findings hard-block buys; warnings require explicit acknowledgement.
+- **Resilient discovery:** Flash `/search` remains primary. If an integrator key is temporarily ineligible for search, DEX Screener resolves the contract and decimals for drafting; Flash still validates the real quote before any wallet signature.
 
 ## Architecture
 

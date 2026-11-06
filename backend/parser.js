@@ -1,5 +1,5 @@
 require('dotenv').config({ path: __dirname + '/.env' })
-const { flashRequest, rememberAssets } = require('./flash.js')
+const { searchAssets } = require('./flash.js')
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions'
 const CONFIDENCE_FLOOR = 0.65
@@ -95,10 +95,7 @@ async function callGroq(tweetText) {
 }
 
 async function searchFlashAssets(token, chain) {
-  const response = await flashRequest('GET', '/search', { query: token, ...(chain && { chain }), limit: 25 })
-  const body = await response.json().catch(() => ({}))
-  if (!response.ok) throw Object.assign(new Error('Flash could not resolve that token'), { status: response.status >= 500 ? 502 : 422 })
-  rememberAssets(body)
+  const body = await searchAssets({ query: token, ...(chain && { chain }), limit: 25 })
   return Array.isArray(body.assets) ? body.assets : []
 }
 
