@@ -17,7 +17,7 @@ Last updated: 2026-11-06
 - **Signal Passport:** stores text hash, public source, exact asset, contract-integrity result, Flash detection price, order terms, expiry, availability checks and one expiry mark-price direction result.
 - **No fake combined trust score:** identity verification, historical signed-call outcomes, follower Flash outcomes, contract integrity and token safety remain separate concepts in the UI/data.
 - **Caller record:** only signed Caller Cards count toward hit rate and median price-direction result. Parsed public posts can be observed but never improve a caller score.
-- **Radar:** `GET /terminal` provides verified Caller Cards with state filters, advanced-order type filters, swarm cards and Flash execution recommendations. The landing-page Radar terminal consumes it.
+- **Radar:** `GET /terminal` provides verified Caller Cards with state filters, advanced-order type filters, swarm cards and Flash execution recommendations. The landing-page Radar terminal consumes it and has a browser-local X-handle watchlist.
 
 ## Important limits (intentional and visible)
 
