@@ -14,6 +14,18 @@ const ROUTES = {
   'cancel-order': { method: 'POST', path: ({ orderId }) => `/orders/${encodeURIComponent(orderId)}/cancel` },
 }
 const ORDER_TYPES = new Set(['market', 'limit', 'twap', 'stop', 'stop-loss', 'take-profit', 'bracket', 'trailing-stop', 'trailing-stop-limit'])
+const assetCache = new Map()
+
+function rememberAssets(payload) {
+  for (const asset of (payload && payload.assets) || []) {
+    if (!asset.chain || !asset.address) continue
+    assetCache.set(`${asset.chain}:${String(asset.address).toLowerCase()}`, { ...asset, cachedAt: Date.now() })
+  }
+}
+
+function getCachedFlashAsset(chain, address) {
+  return assetCache.get(`${chain}:${String(address).toLowerCase()}`) || null
+}
 
 function validateFlashInput(endpoint, params) {
   if (!params || typeof params !== 'object' || Array.isArray(params)) return 'Request body must be an object'
@@ -55,6 +67,9 @@ async function flashProxyCtrl(req, res) {
   try {
     const response = await flashRequest(route.method, routePath, upstreamParams)
     const text = await response.text()
+    if (response.ok && req.params.endpoint === 'search') {
+      try { rememberAssets(JSON.parse(text)) } catch { /* Invalid upstream JSON is returned unchanged below. */ }
+    }
     if (!response.ok) console.log(`Flash ${req.params.endpoint} ${response.status}: ${text.slice(0, 500)}`)
     res.status(response.status).type('application/json').send(text)
   } catch (error) {
@@ -80,4 +95,4 @@ async function flashRequest(method, path, params = {}) {
     })
 }
 
-module.exports = { flashProxyCtrl, flashRequest }
+module.exports = { flashProxyCtrl, flashRequest, getCachedFlashAsset, rememberAssets }

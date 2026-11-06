@@ -14,7 +14,7 @@ Plan B is a Chrome extension that turns trading signals on X into editable, non-
 - **Order dashboard:** open, resolved and cancelled plans are visible inside X. Cancellation uses the canonical Flash cancel message and wallet signature; attached protection can be cancelled with the entry.
 - **Share receipts:** resolved plans expose a pre-filled “Share receipt on X” action.
 - **Caller Cards:** `plan-b-landing-page/caller.html` lets a caller validate and sign a structured plan. The generated tweet contains a `planb:<id>` reference that the extension recognizes as verified.
-- **Security checks:** Intercepta checks supported EVM tokens and setup transactions; Solana surfaces Flash asset-risk signals.
+- **Pre-trade security gate:** Plan B combines Flash risk data, GoPlus token analysis and Honeypot sell simulation where supported. Critical findings hard-block buys; warnings require explicit acknowledgement.
 
 ## Architecture
 
@@ -33,7 +33,7 @@ Reviewed plan
               └─ backend plan log → social proof + order dashboard
 ```
 
-The backend stores order and social context, not private keys. The extension never receives `GROQ_API_KEY`, `DEFINITIVE_FLASH_API_KEY`, or `INTERCEPTA_API_KEY`.
+The backend stores order and social context, not private keys. The extension never receives `GROQ_API_KEY`, `DEFINITIVE_FLASH_API_KEY`, or an optional `GOPLUS_ACCESS_TOKEN`.
 
 ## Local setup
 
@@ -51,7 +51,7 @@ Create `backend/.env` from `backend/.env.example` and set:
 DEFINITIVE_FLASH_API_KEY=
 GROQ_API_KEY=
 GROQ_MODEL=openai/gpt-oss-20b
-INTERCEPTA_API_KEY=
+GOPLUS_ACCESS_TOKEN=       # optional; public checks work without it
 ```
 
 Then run:

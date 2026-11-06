@@ -425,56 +425,33 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Intercepta security checks (via the extension background -> backend proxy)
+  // Plan B security checks (Flash + GoPlus + Honeypot where supported)
   // ---------------------------------------------------------------------------
-  // Chains Intercepta can currently simulate through this integration.
-  const TX_SCAN_CHAINS = new Set([1, 10, 8453, 42161]);
-  // Detectors that vouch for a token rather than warn about it
-  const POSITIVE_DETECTORS = new Set(["HIGH_REPUTATION_TOKEN"]);
   const tokenRiskCache = new Map(); // `${chainId}:${address}` -> Promise of the verdict
 
-  function interceptaApi(message) {
+  function securityApi(chainId, address) {
     if (!inExtension) return Promise.reject(new Error("Security checks need the Plan B extension"));
     return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ action: "intercepta", ...message }, (response) => {
+      chrome.runtime.sendMessage({ action: "security", chainId, address }, (response) => {
         if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-        if (!response.ok) {
-          const body = response.body || {};
-          return reject(Object.assign(new Error(body.message || body.error || `Intercepta API error ${response.status}`), { status: response.status }));
+        if (!response || !response.ok) {
+          const body = response && response.body || {};
+          return reject(Object.assign(new Error(body.message || body.error || `Security API error ${response && response.status || 0}`), { status: response && response.status }));
         }
         resolve(response.body);
       });
     });
   }
 
-  function detectorReasons(detectors) {
-    return (detectors || []).filter((d) => !POSITIVE_DETECTORS.has(d.code)).map((d) => d.description || d.code);
-  }
-
   // -> { action: "block" | "warn" | "info", reasons: [description] }
   function tokenRisk(chainId, address) {
     const key = `${chainId}:${address.toLowerCase()}`;
     if (!tokenRiskCache.has(key)) {
-      const request = interceptaApi({ check: "token", chainId, address }).then((body) => ({
-        action: body.action === "block" || body.action === "warn" ? body.action : "info",
-        reasons: detectorReasons(body.detectors),
-      }));
+      const request = securityApi(chainId, address);
       request.catch(() => tokenRiskCache.delete(key)); // don't cache failures, so the next open retries
       tokenRiskCache.set(key, request);
     }
     return tokenRiskCache.get(key);
-  }
-
-  // Simulates a transaction before it's signed -> { reasons, send, receive }, or null if the chain isn't supported
-  async function scanTransaction(chainId, tx) {
-    if (!TX_SCAN_CHAINS.has(chainId)) return null;
-    const body = await interceptaApi({
-      check: "transaction",
-      chainId,
-      body: { transaction: { from: wallet.account, to: tx.to, data: tx.data, value: toHexQuantity(tx.value) } },
-    });
-    const movement = body.assetsMovement || {};
-    return { reasons: detectorReasons(body.detectors), send: movement.send || [], receive: movement.receive || [] };
   }
 
   // The tweet's author (for a repost, the original author)
@@ -865,7 +842,7 @@
     .status a { color: var(--accent); text-decoration: none; }
     .status a:hover { text-decoration: underline; }
 
-    /* Intercepta verdict on the card's token */
+    /* Plan B multi-source security verdict on the card's token */
     .security { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 16px; color: var(--verdict, var(--muted)); }
     .security .ic-mark { width: 10px; height: 14px; margin-top: 1px; }
     .security b { font-weight: 700; }
@@ -874,7 +851,7 @@
     .social-proof { font-size: 12px; line-height: 16px; color: var(--muted); }
     .social-proof b { color: var(--text); }
 
-    /* Held transaction: Intercepta flagged it, the user decides */
+    /* Held trade: Plan B found a caution signal, so the user must decide */
     .risk { text-align: left; display: flex; flex-direction: column; gap: 6px; }
     .risk ul { margin: 0; padding-left: 18px; }
     .risk-actions { display: flex; gap: 8px; justify-content: flex-end; }
@@ -906,11 +883,7 @@
   const CARET_SVG = `<svg class="caret" viewBox="0 0 24 24"><path d="M3.543 8.96l1.414-1.42L12 14.59l7.043-7.05 1.414 1.42L12 17.41 3.543 8.96z"/></svg>`;
   const ARROW_SVG = `<svg viewBox="0 0 24 24"><path d="M13 3v13.59l5.043-5.05 1.414 1.42L12 20.41l-7.457-7.45 1.414-1.42L11 16.59V3h2z"/></svg>`;
   const SWAP_SVG = `<svg viewBox="0 0 24 24"><path d="M16.293 3.293a1 1 0 0 1 1.414 0l3.5 3.5a1 1 0 0 1 0 1.414l-3.5 3.5-1.414-1.414L18.086 8.5H6V6.5h12.086l-1.793-1.793a1 1 0 0 1 0-1.414zM7.707 12.293l1.414 1.414L7.328 15.5H19.5v2H7.328l1.793 1.793-1.414 1.414-3.5-3.5a1 1 0 0 1 0-1.414l3.5-3.5z"/></svg>`;
-  // Intercepta's logo mark: a 3x4 grid of dots (same geometry as intercepta.io/images/logo-nav.svg)
-  const INTERCEPTA_MARK_SVG = `<svg class="ic-mark" viewBox="0 0 21 29" aria-hidden="true">${
-    [2.5, 10.5, 18.5, 26.5].flatMap((cy) => [2.5, 10.5, 18.5].map((cx) => `<circle cx="${cx}" cy="${cy}" r="2.5"/>`)).join("")
-  }</svg>`;
-  // World logo (from World's own favicon), inlined so it follows the theme color
+  const SHIELD_SVG = `<svg class="ic-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5.2 3.4 9.8 8 11 4.6-1.2 8-5.8 8-11V5l-8-3Zm0 3.1 5 1.9v4c0 3.6-2.1 6.9-5 8-2.9-1.1-5-4.4-5-8V7l5-1.9Z"/></svg>`;
   const CLOSE_SVG = `<svg viewBox="0 0 24 24"><path d="M10.59 12L4.54 5.96l1.42-1.42L12 10.59l6.04-6.05 1.42 1.42L13.41 12l6.05 6.04-1.42 1.42L12 13.41l-6.04 6.05-1.42-1.42L10.59 12z"/></svg>`;
 
   function createPanel(article, link, ticker, initialPlan = null) {
@@ -950,11 +923,12 @@
       stopPrice: parsed.stopLoss ? String(parsed.stopLoss) : "",
       targetPrice: parsed.takeProfit ? String(parsed.takeProfit) : "",
       orderId: null,
-      security: null, // Intercepta verdict on the card's token: { loading } | { action, reasons } | { error } | { native }
+      security: null, // Plan B verdict: { loading } | { action, reasons, sources } | { error } | { native }
     };
     const author = tweetAuthor(article);
     let quoteSeq = 0;
-    let pendingRisk = null; // { resolve, reject } while a flagged transaction waits for the user
+    let pendingRisk = null; // { resolve, reject } while a security warning waits for the user
+    let securityPromise = null;
     let quoteTimer = null;
 
     root.innerHTML = `
@@ -1251,6 +1225,9 @@
       const configError = orderConfigError();
       if (state.busy) {
         cta.disabled = true;
+      } else if (state.side === "buy" && state.security && state.security.loading) {
+        cta.textContent = "Running safety checks…";
+        cta.disabled = true;
       } else if (buyBlocked()) {
         cta.textContent = `${mainToken()} flagged as unsafe`;
         cta.disabled = true;
@@ -1275,7 +1252,8 @@
       }
     }
 
-    // Buying a token Intercepta blocks is refused. Selling one stays possible: it's how you get out.
+    // Buying a token with a critical verdict is refused. Selling remains possible
+    // so a user is never trapped by the safety layer.
     function buyBlocked() {
       return state.side === "buy" && !!state.security && state.security.action === "block";
     }
@@ -1284,23 +1262,27 @@
       const row = $(".security");
       const security = state.security;
       const symbol = escapeHtml(mainToken());
+      const sourceNames = Object.entries(security && security.sources || {})
+        .filter(([, source]) => source && source.available)
+        .map(([name]) => name === "goplus" ? "GoPlus" : name === "honeypot" ? "Honeypot" : "Flash")
+        .join(" + ");
       row.hidden = !security || !!security.native;
       if (row.hidden) return;
       row.removeAttribute("title");
       if (security.loading) {
         row.className = "security loading";
-        row.innerHTML = `${INTERCEPTA_MARK_SVG}<span>Checking ${symbol} with Intercepta…</span>`;
+        row.innerHTML = `${SHIELD_SVG}<span>Running Plan B safety checks for ${symbol}…</span>`;
       } else if (security.error) {
-        row.className = "security";
+        row.className = "security warn";
         row.title = security.error;
-        row.innerHTML = `${INTERCEPTA_MARK_SVG}<span>Intercepta check unavailable</span>`;
+        row.innerHTML = `${SHIELD_SVG}<span><b>Safety check incomplete:</b> execution requires confirmation</span>`;
       } else if (security.action === "info") {
         row.className = "security safe";
-        row.innerHTML = `${INTERCEPTA_MARK_SVG}<span>No known risks for ${symbol} · Intercepta</span>`;
+        row.innerHTML = `${SHIELD_SVG}<span>No known critical risks for ${symbol}${sourceNames ? ` · ${sourceNames}` : ""}</span>`;
       } else {
         const reasons = security.reasons.length ? security.reasons.map(escapeHtml).join(" · ") : `${security.action === "block" ? "Unsafe" : "Risky"} token`;
         row.className = `security ${security.action}`;
-        row.innerHTML = `${INTERCEPTA_MARK_SVG}<span><b>Intercepta ${security.action === "block" ? "blocked" : "flagged"} ${symbol}:</b> ${reasons}</span>`;
+        row.innerHTML = `${SHIELD_SVG}<span><b>Plan B ${security.action === "block" ? "blocked" : "flagged"} ${symbol}:</b> ${reasons}</span>`;
       }
     }
 
@@ -1318,36 +1300,37 @@
     function checkSecurity() {
       const chainId = state.chainId;
       const token = tokenOn(chainId, mainToken());
-      if (isSolana(chainId)) {
-        state.security = token && token.riskFlagged
-          ? { action: "warn", reasons: ["Flash flagged this asset for elevated risk indicators"] }
-          : { native: true };
+      if (!token) {
+        state.security = { error: "The selected token contract could not be resolved." };
         render();
-        return;
+        return Promise.resolve(state.security);
       }
       // Native assets have no contract to scan, so use wrapped native when available.
-      const scanned = isNativeAddress(token.address) ? tokenOn(chainId, "WETH") : token;
+      const scanned = !isSolana(chainId) && isNativeAddress(token.address) ? tokenOn(chainId, "WETH") : token;
       if (!scanned) {
         state.security = { native: true };
         render();
-        return;
+        return Promise.resolve(state.security);
       }
       state.security = { loading: true };
       render();
-      tokenRisk(chainId, scanned.address)
+      securityPromise = tokenRisk(chainId, scanned.address)
         .then((risk) => risk, (error) => ({ error: error.message }))
         .then((security) => {
-          if (chainId !== state.chainId) return;
+          if (chainId !== state.chainId) return security;
           state.security = security;
           render();
+          return security;
         });
+      return securityPromise;
     }
 
-    // Hold a flagged transaction until the user cancels or explicitly continues
+    // Hold a caution/unknown verdict until the user cancels or explicitly continues.
+    // Critical verdicts never reach this prompt: they are always blocked.
     function confirmRisk(reasons) {
       return new Promise((resolve, reject) => {
         pendingRisk = { resolve, reject };
-        setStatus(`<div class="risk"><b>Intercepta flagged this transaction</b><ul>${reasons.map((r) => `<li>${escapeHtml(r)}</li>`).join("")}</ul>
+        setStatus(`<div class="risk"><b>Plan B safety warning</b><ul>${reasons.map((r) => `<li>${escapeHtml(r)}</li>`).join("")}</ul>
           <div class="risk-actions"><button data-risk="cancel">Cancel</button><button data-risk="continue">Continue anyway</button></div></div>`, "error");
       });
     }
@@ -1358,21 +1341,21 @@
       if (!pending) return;
       setStatus("");
       if (proceed) pending.resolve();
-      else pending.reject(Object.assign(new Error("Cancelled after Intercepta's warning."), { code: "RISK_CANCELLED" }));
+      else pending.reject(Object.assign(new Error("Cancelled after Plan B's safety warning."), { code: "RISK_CANCELLED" }));
     }
 
-    // Simulate with Intercepta, then send. If the check itself fails the transaction still goes
-    // through: every token here is on the verified list, and the wallet prompt remains the final gate.
-    async function guardedSend(chainId, tx, step) {
-      step("Checking transaction…");
-      let scan = null;
-      try {
-        scan = await scanTransaction(chainId, tx);
-      } catch (error) {
-        console.warn("[Plan B] Intercepta transaction check failed:", error.message);
+    async function enforceSecurityGate() {
+      if (state.side !== "buy") return;
+      let security = state.security;
+      if (!security || security.loading) security = await (securityPromise || checkSecurity());
+      if (security && security.action === "block") {
+        throw Object.assign(new Error(`Trade blocked: ${(security.reasons || []).join(" · ") || "critical token risk detected"}`), { code: "SECURITY_BLOCKED" });
       }
-      if (scan && scan.reasons.length) await confirmRisk(scan.reasons);
-      return { scan, send: () => sendTransaction(tx) };
+      if (!security || security.error) {
+        await confirmRisk(["The token security scan could not be completed. Risk status is unknown."]);
+      } else if (security.action === "warn") {
+        await confirmRisk(security.reasons || ["Elevated token risk indicators were found."]);
+      }
     }
 
     // --- quotes --------------------------------------------------------------
@@ -1534,9 +1517,8 @@
 
     async function sendSetupAction(tx, label, step) {
       const action = { to: tx.to, data: tx.data, value: tx.value || "0" };
-      const { send } = await guardedSend(state.chainId, action, step);
       step(`${label} in wallet…`);
-      const hash = await send();
+      const hash = await sendTransaction(action);
       await waitForReceipt(hash);
       return hash;
     }
@@ -1599,6 +1581,8 @@
       state.busy = true;
       render();
       try {
+        step("Running safety checks…");
+        await enforceSecurityGate();
         step("Getting Flash quote…");
         const quote = await freshFlashQuote(step);
         const signatures = await signFlashOrder(quote, step);

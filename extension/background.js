@@ -60,16 +60,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // Intercepta security checks. token: GET /intercepta/token/:chainId/:address, transaction: POST /intercepta/transaction/:chainId
-  if (message.action === "intercepta") {
-    const request = message.check === "token"
-      ? fetch(`${BACKEND_URL}/intercepta/token/${Number(message.chainId)}/${encodeURIComponent(message.address)}`)
-      : fetch(`${BACKEND_URL}/intercepta/transaction/${Number(message.chainId)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(message.body),
-        });
-    request
+  // Plan B token-security gate. The backend combines Flash, GoPlus and
+  // Honeypot simulation where the selected network is supported.
+  if (message.action === "security") {
+    const chain = message.chainId === "solana" ? "solana" : Number(message.chainId);
+    fetch(`${BACKEND_URL}/security/token/${chain}/${encodeURIComponent(message.address)}`)
       .then(async (response) => {
         const text = await response.text();
         let body;
