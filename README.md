@@ -187,29 +187,44 @@ The backend subscribes to Flash’s Orders WebSocket and maps order updates into
 
 ## System architecture
 
-```text
-                 ┌──────────────────────────────────────────┐
-                 │                  X post                  │
-                 └────────────────────┬─────────────────────┘
-                                      │
-                         Candidate / Caller Card gate
-                                      │
-                 ┌────────────────────▼─────────────────────┐
-                 │             Plan B extension             │
-                 │ parse button · panel · wallet · alerts   │
-                 └────────────────────┬─────────────────────┘
-                                      │ localhost API
-┌─────────────────────────────────────▼──────────────────────────────────────┐
-│                              Plan B backend                                 │
-│ Groq structured parse → server validation → contract/safety → strategy      │
-│ Passport + Radar + plan log + public-source monitor + Flash stream          │
-└───────────────┬───────────────────────────────┬─────────────────────────────┘
-                │                               │
-         Definitive Flash                  Safety providers
-    search · quote · order · updates       GoPlus · Honeypot
-    cancel · balances · Orders WebSocket
-                │
-        Wallet-signed, non-custodial execution
+```mermaid
+flowchart TD
+  post([X post]) --> kind{What kind of post is this?}
+
+  kind -->|Signed planb: Caller Card| caller[Verified caller strategy\nwallet signature + Passport]
+  kind -->|Token + clear buy/sell intent| signal[Candidate social signal\nparse only; no size or permission]
+  kind -->|Token context, but no executable plan| context[Market commentary / whale alert / thesis]
+  kind -->|No token or no trade intent| ignore[No Plan B action]
+
+  caller --> signed[Load signed terms\ncheck freshness + source evidence]
+  signal --> groq[Groq structured extraction]
+  context --> manual[Manual trade panel\npost is context, not advice]
+
+  groq --> validate[Server validation\nexact contract · chain · price sanity]
+  signed --> validate
+  validate --> safety{Contract integrity\n+ safety gate}
+  safety -->|Mismatched or dangerous| block[Block execution\nshow reason]
+  safety -->|Eligible| strategy[Plan B strategy compiler]
+  manual --> strategy
+
+  strategy --> decision{Signal state + terms}
+  decision -->|Immediate entry + stop/target| bracket[Market + attached bracket]
+  decision -->|Buy on pullback| limit[Limit + attached bracket]
+  decision -->|Late / scale-in call| twap[TWAP or DCA + protection]
+  decision -->|Breakout level| stop[Stop entry]
+  decision -->|Existing bag needs protection| exits[Stop-loss · take-profit · trailing]
+
+  bracket --> review[Editable order panel\nuser chooses size and reviews quote]
+  limit --> review
+  twap --> review
+  stop --> review
+  exits --> review
+
+  review --> wallet[User wallet signs\nnon-custodial]
+  wallet --> flash[Definitive Flash\nquote → order → managed onchain execution]
+  flash --> stream[Flash Orders WebSocket]
+  stream --> evidence[PostgreSQL evidence layer\nplan log · receipt · Passport · caller history]
+  evidence --> surfaces[Radar · Signal Passports · Rankings · Outcomes\nfollow alerts + social proof]
 ```
 
 ## Definitive Flash integration
