@@ -14,9 +14,9 @@ Last updated: 2026-11-06
 ## Social/accountability layer
 
 - **Verified Caller Card:** a caller signs a canonical strategy message. The later X post is attached as source evidence by the extension without modifying that signed strategy.
-- **Source attestation:** a linked post must contain the specific `planb:<id>` reference. The Passport distinguishes `browser_observed`, `public_verified`, `public_available_unverified`, `unavailable`, and `removed`; a public embed check never silently becomes identity proof.
+- **Source attestation:** a linked post must contain the specific `planb:<id>` reference and is checked immediately against X’s public embed endpoint. The Passport distinguishes `browser_observed`, `public_verified`, `public_available_unverified`, `unavailable`, and `removed`; a public embed check never silently becomes identity proof.
 - **Signal Passport:** stores text hash, public source, exact asset, contract-integrity result, Flash detection price, order terms, expiry, availability checks and one expiry mark-price direction result.
-- **Append-only revisions:** a Caller Card signer can publish a separately signed strategy revision with a reason. Original Passport terms never change; Radar shows the newest revision and its explanation.
+- **Append-only revisions:** a Caller Card signer can publish a separately signed strategy revision with a reason. Original Passport terms never change; Radar shows the newest revision and its explanation. A follower’s open Flash plan can also revise its limit price or its attached stop/target protection with a fresh wallet signature.
 - **Flash execution receipts:** a follower record keeps quote ID, quote time, estimated price impact and fee data. The order dashboard shows available quote quality and supports wallet-signed limit updates through Flash's cancel-and-replace endpoint.
 - **No fake combined trust score:** identity verification, historical signed-call outcomes, follower Flash outcomes, contract integrity and token safety remain separate concepts in the UI/data.
 - **Caller record:** only signed Caller Cards count toward hit rate and median price-direction result. Parsed public posts can be observed but never improve a caller score.

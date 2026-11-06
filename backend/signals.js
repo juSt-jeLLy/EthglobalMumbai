@@ -234,7 +234,7 @@ async function captureSignalCtrl(req, res) {
 
 // A Caller Card is signed before it is posted. The extension attaches the
 // public X source afterwards, without changing the signed strategy itself.
-function attachSourceCtrl(req, res) {
+async function attachSourceCtrl(req, res) {
   const signal = getSignal(String(req.params.id || ''))
   if (!signal) return res.status(404).json({ error: 'NotFound', message: 'Signal not found.' })
   if (!signal.verified || !signal.passport) return res.status(409).json({ error: 'NotVerified', message: 'Only a signed Caller Card can be linked to a public post.' })
@@ -252,6 +252,9 @@ function attachSourceCtrl(req, res) {
   signal.passport.availability = { status: 'not_checked', checks: [] }
   signal.passport.sourceVerification = { status: 'browser_observed', checks: [{ status: 'browser_observed', checkedAt: new Date().toISOString() }] }
   saveSignals()
+  // Public confirmation is best-effort and never blocks use of a signed plan.
+  // The resulting status tells viewers whether the public source was verified.
+  await checkAvailability(signal)
   res.json({ signalId: signal.id, passport: signal.passport })
 }
 
