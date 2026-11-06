@@ -60,6 +60,15 @@ function uniqueStrings(values) {
   return [...new Set((Array.isArray(values) ? values : []).map((value) => cleanText(String(value))).filter(Boolean))]
 }
 
+function unclearPlan(details) {
+  return Object.assign(new Error("This mentions a trade, but needs an entry or risk level before it can become a plan."), {
+    status: 422,
+    code: 'INSUFFICIENT_SIGNAL',
+    manualEligible: true,
+    ...(details && { details }),
+  })
+}
+
 function spokenNumber(value) {
   const direct = finitePositive(String(value || '').replace(/[$,]/g, ''))
   if (direct) return direct
@@ -80,7 +89,10 @@ function voiceFallbackDraft(input) {
   const entryType = /\b(twap|dca|scale[ -]?in)\b/i.test(text) ? 'twap'
     : /\b(limit)\b/i.test(text) ? 'limit'
       : /\b(trailing)\b/i.test(text) ? 'trailing-stop'
-        : /\b(stop|breakout)\b/i.test(text) && /\b(entry|buy|sell|long|short)\b/i.test(text) ? 'stop'
+        // A plain "stop at 1800" after a market buy is protection, not a
+        // stop-entry order. Only explicit entry/trigger language creates a
+        // Flash stop order.
+        : /\b(?:stop[ -]?(?:buy|sell|entry)|breakout|trigger)\b/i.test(text) ? 'stop'
           : 'market'
   const readPrice = (pattern) => {
     const match = text.match(pattern)
@@ -93,8 +105,15 @@ function voiceFallbackDraft(input) {
   const stopLoss = readPrice(/\b(?:stop(?:\s+loss)?|sl)\s*(?:at)?\s*\$?([\d,.]+)/i)
   const takeProfit = readPrice(/\b(?:take\s+profit|target|tp)\s*(?:at)?\s*\$?([\d,.]+)/i)
   const trailPercent = readPrice(/\b(?:trail(?:ing)?(?:\s+stop)?|trail)\s*(\d+(?:\.\d+)?)\s*%/i)
-  const triggerPrice = entryType === 'stop' ? readPrice(/\b(?:stop|breakout|trigger)\s*(?:at)?\s*\$?([\d,.]+)/i) : null
+  const triggerPrice = entryType === 'stop' ? readPrice(/\b(?:stop[ -]?(?:buy|sell|entry)|breakout|trigger)\s*(?:at)?\s*\$?([\d,.]+)/i) : null
   const side = /^(sell|short)$/i.test(sideMatch[1]) ? 'sell' : 'buy'
+  // This recovery parser is deliberately narrower than Groq. It may rescue a
+  // plainly stated executable order, but must never turn casual "buy ETH"
+  // commentary into a market order merely because the model was unavailable.
+  const explicitEntry = /\b(?:at\s+)?market\b|\b(?:limit|twap|dca|scale[ -]?in|trailing|breakout|trigger)\b/i.test(text)
+    || (entryType === 'stop' && !!triggerPrice)
+  const explicitProtection = !!stopLoss && !!takeProfit
+  if (!explicitEntry && !explicitProtection) return null
   const draft = {
     token: tokenMatch[1].toUpperCase(), chain: chainMatch ? normalizeChain(chainMatch) : null, side,
     strategyType: entryType === 'twap' ? 'scale-in' : entryType === 'stop' ? 'breakout' : entryType.startsWith('trailing') ? 'trail' : 'immediate',
@@ -155,15 +174,15 @@ async function callGroq(tweetText, mode = 'tweet') {
     const providerMessage = payload.error && payload.error.message ? payload.error.message : `Groq returned ${response.status}`
     const schemaFailure = /(?:json|schema|failed_generation|structured output)/i.test(providerMessage)
     if (schemaFailure) {
-      throw Object.assign(new Error("This mentions a trade, but needs an entry or risk level before it can become a plan."), { status: 422 })
+      throw unclearPlan()
     }
     console.error('Groq request failed:', providerMessage)
     throw Object.assign(new Error("We couldn't analyze this signal right now. Please try again."), { status: 502 })
   }
   const content = payload.choices && payload.choices[0] && payload.choices[0].message && payload.choices[0].message.content
-  if (!content) throw Object.assign(new Error("This mentions a trade, but needs an entry or risk level before it can become a plan."), { status: 422 })
+  if (!content) throw unclearPlan()
   try { return JSON.parse(content) } catch {
-    throw Object.assign(new Error("This mentions a trade, but needs an entry or risk level before it can become a plan."), { status: 422 })
+    throw unclearPlan()
   }
 }
 
@@ -226,7 +245,7 @@ async function validateDraft(rawDraft) {
 
   const blockingMissing = new Set(['token', 'side', 'entryType', 'entryPrice', 'durationHours', 'triggerPrice', 'triggerDirection', 'stopLoss', 'takeProfit', 'trailPercent'])
   if (draft.confidence < CONFIDENCE_FLOOR || draft.missing.some((field) => blockingMissing.has(field))) {
-    throw Object.assign(new Error("This mentions a trade, but needs an entry or risk level before it can become a plan."), { status: 422, details: { confidence: draft.confidence, missing: draft.missing, ambiguous: draft.ambiguous } })
+    throw unclearPlan({ confidence: draft.confidence, missing: draft.missing, ambiguous: draft.ambiguous })
   }
 
   const assets = await searchFlashAssets(draft.token, draft.chain)
@@ -287,17 +306,27 @@ async function parsePlanCtrl(req, res) {
     }
     const voiceMode = req.body && req.body.mode === 'voice'
     let parsed
-    try { parsed = await callGroq(tweetText, voiceMode ? 'voice' : 'tweet') }
-    catch (error) {
-      const fallback = voiceMode && voiceFallbackDraft(tweetText)
+    try {
+      parsed = await callGroq(tweetText, voiceMode ? 'voice' : 'tweet')
+      return res.json(await validateDraft(parsed))
+    } catch (error) {
+      // Groq is the general parser, but an explicit order must not be demoted
+      // into manual mode when structured output flakes. Recover only facts the
+      // tweet states plainly, then run the same Flash asset/price validation.
+      const fallback = voiceFallbackDraft(tweetText)
       if (!fallback) throw error
-      parsed = fallback
+      return res.json(await validateDraft(fallback))
     }
-    res.json(await validateDraft(parsed))
   } catch (error) {
     const status = Number(error.status) || 500
     if (status >= 500) console.error('Plan parser failed:', error.message)
-    res.status(status).json({ error: status === 422 ? 'UnclearPlan' : 'ParseFailed', message: error.message, ...(error.details && { details: error.details }) })
+    res.status(status).json({
+      error: status === 422 ? 'UnclearPlan' : 'ParseFailed',
+      message: error.message,
+      ...(error.code && { code: error.code }),
+      ...(error.manualEligible && { manualEligible: true }),
+      ...(error.details && { details: error.details }),
+    })
   }
 }
 

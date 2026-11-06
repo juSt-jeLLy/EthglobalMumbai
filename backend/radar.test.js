@@ -37,3 +37,16 @@ test('retains explicit advanced order details from a voice command', () => {
   assert.equal(draft.takeProfit, 2500)
   assert.equal(draft.exitType, 'bracket')
 })
+
+test('recovers an explicit tweet bracket when structured parsing is unavailable', () => {
+  const draft = voiceFallbackDraft('Buy ETH on Base at market, stop at 1800 and take profit at 3000')
+  assert.equal(draft.chain, 'base')
+  assert.equal(draft.entryType, 'market')
+  assert.equal(draft.stopLoss, 1800)
+  assert.equal(draft.takeProfit, 3000)
+  assert.equal(draft.exitType, 'bracket')
+})
+
+test('does not turn casual token commentary into a recovered market order', () => {
+  assert.equal(voiceFallbackDraft('I might buy ETH someday'), null)
+})

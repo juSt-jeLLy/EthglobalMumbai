@@ -428,7 +428,12 @@
         if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
         if (!response || !response.ok) {
           const body = response && response.body || {};
-          return reject(Object.assign(new Error(body.message || `Plan parser error ${response && response.status || 0}`), { status: response && response.status, details: body.details }));
+          return reject(Object.assign(new Error(body.message || `Plan parser error ${response && response.status || 0}`), {
+            status: response && response.status,
+            code: body.code,
+            manualEligible: body.manualEligible === true,
+            details: body.details,
+          }));
         }
         resolve(response.body);
       });
@@ -2350,7 +2355,7 @@
         createParsedPlanCard(article, result);
         button.lastElementChild.textContent = "Ready to review";
       } catch (error) {
-        if (error.status === 422) {
+        if (error.status === 422 && error.manualEligible) {
           // A contextual post still deserves a useful next step. Open manual
           // mode on this same click, with no model-inferred order parameters.
           button.lastElementChild.textContent = "Opening manual trade…";
