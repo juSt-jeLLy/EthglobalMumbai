@@ -8,10 +8,14 @@
   const entrySelect = form.querySelector("#caller-entry");
   const humanTitle = document.querySelector("#human-title");
   const humanCopy = document.querySelector("#human-copy");
-  const verifyHumanButton = document.querySelector("#verify-human");
+  const primaryAction = document.querySelector("#primary-action");
   const worldConnector = document.querySelector("#world-connector");
   const worldQr = document.querySelector("#world-qr");
   const worldOpen = document.querySelector("#world-open");
+  const worldSimulator = document.querySelector("#world-simulator");
+  const worldCopy = document.querySelector("#world-copy");
+  const worldConnectorTitle = document.querySelector("#world-connector-title");
+  const worldConnectorCopy = document.querySelector("#world-connector-copy");
   let currentSignal = null;
   let worldState = { configured: false, required: false, humanVerification: null, signer: null };
   const sideSelect = form.querySelector('[name="side"]');
@@ -48,15 +52,22 @@
     const verified = worldState.humanVerification;
     worldConnector.hidden = true;
     if (verified) {
-      humanTitle.textContent = "Verified Human Caller";
-      humanCopy.textContent = `World Proof of Human verified ${new Date(verified.verifiedAt).toLocaleDateString()}. Your wallet still signs every strategy.`;
-      verifyHumanButton.hidden = true;
+      const production = verified.environment === "production";
+      humanTitle.textContent = production ? "Verified Human Caller" : "Simulator-verified caller";
+      humanCopy.textContent = production
+        ? `World Proof of Human verified ${new Date(verified.verifiedAt).toLocaleDateString()}. Your wallet still signs every strategy.`
+        : `World staging proof verified ${new Date(verified.verifiedAt).toLocaleDateString()}. This confirms the integration flow, not a production human credential.`;
+      primaryAction.textContent = "Validate and sign strategy";
+      primaryAction.type = "submit";
+      primaryAction.disabled = false;
       return;
     }
     if (worldState.required && !worldState.configured) {
       humanTitle.textContent = "World verification is required";
       humanCopy.textContent = "The server is missing its World Developer Portal configuration. Publishing is safely blocked until it is configured.";
-      verifyHumanButton.hidden = true;
+      primaryAction.textContent = "World verification unavailable";
+      primaryAction.type = "button";
+      primaryAction.disabled = true;
       return;
     }
     if (worldState.configured) {
@@ -64,13 +75,16 @@
       humanCopy.textContent = worldState.required
         ? "Verify once with World ID before publishing. It proves uniqueness, not your identity or X-handle ownership."
         : "Optionally verify with World ID to add unique-human authenticity to your Caller Cards.";
-      verifyHumanButton.hidden = false;
-      verifyHumanButton.textContent = "Verify humanity";
+      primaryAction.textContent = worldState.required ? "Verify humanity to continue" : "Validate and sign strategy";
+      primaryAction.type = worldState.required ? "button" : "submit";
+      primaryAction.disabled = false;
       return;
     }
     humanTitle.textContent = "Wallet-signed caller";
     humanCopy.textContent = "World Proof of Human is not configured for this local demo. A wallet signature still binds every strategy to its creator.";
-    verifyHumanButton.hidden = true;
+    primaryAction.textContent = "Validate and sign strategy";
+    primaryAction.type = "submit";
+    primaryAction.disabled = false;
   }
 
   async function refreshWorldState(signer = null) {
@@ -80,24 +94,39 @@
     return worldState;
   }
 
-  function showWorldQr(uri) {
+  function showWorldQr(uri, environment) {
     if (typeof window.qrcode !== "function") throw new Error("The World ID QR helper did not load.");
     const code = window.qrcode(0, "M");
     code.addData(uri);
     code.make();
     worldQr.innerHTML = code.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
     worldOpen.href = uri;
+    const staging = environment === "staging";
+    worldConnectorTitle.textContent = staging ? "Use the World staging simulator" : "Scan with World App";
+    worldConnectorCopy.textContent = staging
+      ? "This is a test-only proof. Open the simulator on this computer; no phone or real World ID is needed."
+      : "Approve the Proof of Human request for this connected wallet.";
+    worldSimulator.href = `https://simulator.worldcoin.org/?connect_url=${encodeURIComponent(uri)}`;
+    worldSimulator.hidden = !staging;
+    worldCopy.hidden = !staging;
     worldConnector.hidden = false;
   }
 
-  verifyHumanButton.addEventListener("click", async () => {
+  worldCopy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(worldSimulator.href);
+      worldCopy.textContent = "Simulator link copied";
+    } catch { worldCopy.textContent = "Copy unavailable — use Open staging simulator"; }
+  });
+
+  async function beginHumanVerification() {
     try {
       const signer = await connectedSigner();
       const current = await refreshWorldState(signer);
       if (current.humanVerification) return;
       if (!current.configured) throw new Error("World ID is not configured on this backend.");
       if (!window.IDKit) throw new Error("The World ID SDK did not load.");
-      verifyHumanButton.disabled = true;
+      primaryAction.disabled = true;
       humanCopy.textContent = "Preparing your privacy-preserving Proof of Human request…";
       const config = await request("/world/rp-context", { signer });
       const proofRequest = await window.IDKit.request({
@@ -107,8 +136,10 @@
         allow_legacy_proofs: false,
         environment: config.environment,
       }).preset(window.IDKit.proofOfHuman({ signal: config.signal }));
-      showWorldQr(proofRequest.connectorURI);
-      humanCopy.textContent = "Scan the QR code in World App, then approve the Proof of Human request.";
+      showWorldQr(proofRequest.connectorURI, config.environment);
+      humanCopy.textContent = config.environment === "staging"
+        ? "Open the staging simulator below and approve the test proof."
+        : "Scan the QR code in World App, then approve the Proof of Human request.";
       const completion = await proofRequest.pollUntilCompletion({ pollInterval: 1800, timeout: 300000 });
       if (!completion.success) throw new Error(completion.error === "user_rejected" ? "World verification was declined." : `World verification did not complete: ${completion.error || "unknown error"}`);
       humanCopy.textContent = "Sign once to bind this World proof to your caller wallet…";
@@ -121,7 +152,17 @@
     } catch (error) {
       worldConnector.hidden = true;
       humanCopy.textContent = error.message;
-    } finally { verifyHumanButton.disabled = false; }
+    } finally {
+      renderWorldState();
+    }
+  }
+
+  // A verification CTA must not be a form submit button: browser constraint
+  // validation would otherwise focus the empty Token field before World starts.
+  primaryAction.addEventListener("click", async (event) => {
+    if (primaryAction.type !== "button" || primaryAction.disabled) return;
+    event.preventDefault();
+    await beginHumanVerification();
   });
 
   refreshWorldState().catch(() => {
@@ -137,7 +178,11 @@
     try {
       const signer = await connectedSigner();
       const world = await refreshWorldState(signer);
-      if (world.required && !world.humanVerification) throw new Error("Verify this wallet with World ID before publishing a Caller Card.");
+      if (world.required && !world.humanVerification) {
+        status.textContent = "";
+        await beginHumanVerification();
+        return;
+      }
       const values = new FormData(form);
       const plan = () => ({
         token: String(values.get("token") || "").trim().replace(/^\$/, ""),
@@ -162,7 +207,10 @@
       tweet.value = created.tweetText;
       document.querySelector("#open-x").href = `https://twitter.com/intent/tweet?text=${encodeURIComponent(created.tweetText)}`;
       result.hidden = false;
-      status.textContent = `${world.humanVerification ? "Verified Human Caller" : "Wallet-signed caller"} strategy ready: ${prepared.strategy.summary}.`;
+      const callerStatus = world.humanVerification
+        ? world.humanVerification.environment === "production" ? "Verified Human Caller" : "Simulator-verified caller"
+        : "Wallet-signed caller";
+      status.textContent = `${callerStatus} strategy ready: ${prepared.strategy.summary}.`;
     } catch (error) {
       status.textContent = /reject|denied/i.test(error.message) ? "Signature cancelled in wallet." : error.message;
     } finally { submit.disabled = false; }

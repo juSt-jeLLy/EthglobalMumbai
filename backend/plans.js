@@ -1,26 +1,11 @@
-const fs = require('fs')
-const path = require('path')
+const { loadCollection, replaceCollection } = require('./database.js')
 
-const DATA_DIR = path.join(__dirname, 'data')
-const DATA_FILE = path.join(DATA_DIR, 'plans.json')
 const OPEN_STATUSES = new Set(['ORDER_STATUS_PENDING', 'ORDER_STATUS_ACCEPTED', 'ORDER_STATUS_PARTIALLY_FILLED'])
 const listeners = new Set()
 
-function readPlans() {
-  try {
-    const rows = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'))
-    return Array.isArray(rows) ? rows : []
-  } catch { return [] }
-}
-
-let plans = readPlans()
-
-function savePlans() {
-  fs.mkdirSync(DATA_DIR, { recursive: true })
-  const temporary = `${DATA_FILE}.tmp`
-  fs.writeFileSync(temporary, JSON.stringify(plans, null, 2))
-  fs.renameSync(temporary, DATA_FILE)
-}
+let plans = []
+async function hydratePlans() { plans = await loadCollection('plans') }
+function savePlans() { return replaceCollection('plans', plans, (plan) => plan.orderId) }
 
 function text(value, max = 120) {
   return typeof value === 'string' ? value.trim().slice(0, max) : ''
@@ -58,7 +43,7 @@ function emit(plan) {
   for (const response of listeners) response.write(payload)
 }
 
-function createPlanCtrl(req, res) {
+async function createPlanCtrl(req, res) {
   const body = req.body || {}
   if (!validOrderId(body.orderId)) return res.status(400).json({ error: 'InvalidOrder', message: 'A valid Flash orderId is required.' })
   if (!text(body.token, 32) || !text(body.planType, 32) || !text(body.funderAddress, 80)) {
@@ -91,7 +76,7 @@ function createPlanCtrl(req, res) {
     updatedAt: new Date().toISOString(),
   }
   plans.push(plan)
-  savePlans()
+  await savePlans()
   emit(plan)
   res.status(201).json(publicPlan(plan))
 }
@@ -199,7 +184,7 @@ function outcomeFor(plan, order) {
   return Math.abs(price - plan.takeProfit) <= Math.abs(price - plan.stopLoss) ? 'hit_target' : 'stopped_out'
 }
 
-function applyOrderUpdate(order) {
+async function applyOrderUpdate(order) {
   if (!order || !order.orderId) return
   let plan = plans.find((row) => row.orderId === order.orderId || row.bracketOrderId === order.orderId)
   if (!plan && order.sourceEntryOrderId) plan = plans.find((row) => row.orderId === order.sourceEntryOrderId)
@@ -229,8 +214,8 @@ function applyOrderUpdate(order) {
       updatedAt: new Date().toISOString(),
     }
   }
-  savePlans()
+  await savePlans()
   emit(plan)
 }
 
-module.exports = { createPlanCtrl, listPlansCtrl, socialProofCtrl, leaderboardCtrl, planEventsCtrl, applyOrderUpdate, signalRoom }
+module.exports = { createPlanCtrl, listPlansCtrl, socialProofCtrl, leaderboardCtrl, planEventsCtrl, applyOrderUpdate, signalRoom, hydratePlans }

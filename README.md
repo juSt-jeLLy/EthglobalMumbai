@@ -6,7 +6,7 @@ The Chrome extension is the in-context execution surface; Caller Cards, Radar, t
 
 The product principle is simple: social posts may suggest a strategy, but only the follower chooses size, reviews the exact asset and protections, and signs from their own wallet.
 
-Plan B also includes a production PostgreSQL data model for durable Caller Cards, Signal Passports, revisions, subscriptions, follower plans, and Flash lifecycle events. The current local demo deliberately remains JSON-backed until that database is connected through a reviewed migration; see [PostgreSQL infrastructure](infra/postgres/README.md).
+Plan B persists durable Caller Cards, Signal Passports, revisions, subscriptions, follower plans, and Flash lifecycle events in PostgreSQL. The backend applies its migrations at startup and fails fast without `DATABASE_URL`, rather than silently falling back to local JSON; see [PostgreSQL infrastructure](infra/postgres/README.md).
 
 ## Why Plan B exists
 

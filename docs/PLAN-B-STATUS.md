@@ -28,7 +28,7 @@ Last updated: 2026-11-06
 
 - A Passport expiry result is a Flash mark-price direction check, not proof that a target or stop executed. Actual follower target/stop outcomes come from Flash order events.
 - “Post removed” requires two consecutive public `404` source checks. An API/network problem stays `unavailable`.
-- Local `backend/data/*.json` is demo storage. It is not durable, authenticated multi-user storage or a cryptographic public ledger.
+- PostgreSQL is the required runtime store for plans, Signal Passports, caller subscriptions, and World verification records. Legacy JSON can be imported once with `npm run db:import-json`; it is never used as a runtime fallback.
 - The app does not auto-sign, copy wallet balances, auto-execute a caller’s trade, or parse a user’s size from a post.
 - The Flash search entitlement must be active for fully live asset discovery. The existing DEX metadata fallback is only for draft discovery; Flash remains the executor and final quote source.
 

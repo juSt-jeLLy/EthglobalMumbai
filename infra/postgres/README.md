@@ -4,9 +4,9 @@ This directory contains the production PostgreSQL schema for Plan B's durable
 social-trading records: Caller Cards, Signal Passports, revisions, source
 checks, follower plans, Flash order events, and caller subscriptions.
 
-It is deliberately **not connected** to the current hackathon runtime. The
-running Node backend continues to use `backend/data/*.json`, so local demos
-remain self-contained and require no database service.
+The backend uses PostgreSQL as its only runtime store. It will fail fast if
+`DATABASE_URL` is absent or unreachable; it never silently falls back to
+`backend/data/*.json`.
 
 ## Local production-schema rehearsal
 
@@ -19,8 +19,8 @@ docker compose ps
 ```
 
 PostgreSQL listens on `localhost:54329` by default. The first startup applies
-`migrations/001_plan_b.sql`; Docker's named volume preserves the database
-between restarts.
+the schema automatically when the backend starts; Docker's named volume
+preserves the database between restarts.
 
 To start again from an empty local database, remove only this named volume:
 
@@ -40,8 +40,20 @@ DATABASE_SSL=true
 DATABASE_POOL_MAX=10
 ```
 
-`DATABASE_URL` is intentionally unused by the current runtime. Connecting it
-requires a separate, reviewed repository migration from the JSON stores in
-`backend/plans.js`, `backend/signals.js`, and `backend/radar.js`; it must not be
-enabled merely by setting an environment variable. This prevents a half-migrated
-demo from writing some records to JSON and some to Postgres.
+On startup the backend applies ordered migrations and loads durable plans,
+signals, subscriptions, and World verification records from `runtime_documents`.
+The normalized tables in `001_plan_b.sql` are retained for future analytical
+projections; the document store preserves the current API records (including
+Passport evidence) without lossy field mapping.
+
+For local development, copy `backend/.env.example` to `backend/.env`, set the
+same password used by `infra/postgres/.env`, and use:
+
+```env
+DATABASE_URL=postgresql://plan_b:YOUR_PASSWORD@localhost:54329/plan_b
+DATABASE_SSL=false
+```
+
+Then run `npm run db:migrate` from `backend/`, or simply start the backend.
+To preserve an existing local JSON demo before switching, run the explicit
+one-time `npm run db:import-json` command while the backend is stopped.

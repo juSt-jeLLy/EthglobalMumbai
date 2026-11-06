@@ -1,6 +1,5 @@
 -- Plan B production data model (PostgreSQL 16+).
--- This schema is intentionally not wired into backend/*.js yet. The hackathon
--- runtime continues to use backend/data/*.json until a deliberate migration.
+-- Applied automatically by the backend before it accepts requests.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 

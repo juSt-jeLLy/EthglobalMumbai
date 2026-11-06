@@ -41,8 +41,10 @@ across unrelated apps.
    The signing key is a server secret and must never appear in the static page
    or extension.
 4. For a local simulator rehearsal, set `WORLD_ENVIRONMENT=staging` and use
-   the [World ID Simulator](https://simulator.worldcoin.org). For a live demo,
-   set `WORLD_ENVIRONMENT=production` and use a real World ID proof.
+   the [World ID Simulator](https://simulator.worldcoin.org). Staging cards are
+   labelled simulator-verified and must not be presented as real human
+   verification. For a live demo, set `WORLD_ENVIRONMENT=production` and use a
+   real World ID proof.
 5. After one successful proof, set
    `WORLD_REQUIRE_CALLER_VERIFICATION=true` to make it a publishing requirement.
 

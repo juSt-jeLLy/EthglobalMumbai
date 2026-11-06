@@ -1,29 +1,14 @@
-const fs = require('fs')
-const path = require('path')
+const { loadCollection, replaceCollection } = require('./database.js')
 const { searchAssets } = require('./flash.js')
 const { getSignal, listSignals, listObservedSignals, settlePassport } = require('./signals.js')
 const { signalRoom } = require('./plans.js')
 
-const DATA_DIR = path.join(__dirname, 'data')
-const DATA_FILE = path.join(DATA_DIR, 'subscriptions.json')
 const SWARM_WINDOW_MS = 45 * 60 * 1000
 const STALE_AFTER_MS = 24 * 60 * 60 * 1000
 
-function readSubscriptions() {
-  try {
-    const rows = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'))
-    return Array.isArray(rows) ? rows : []
-  } catch { return [] }
-}
-
-let subscriptions = readSubscriptions()
-
-function saveSubscriptions() {
-  fs.mkdirSync(DATA_DIR, { recursive: true })
-  const temporary = `${DATA_FILE}.tmp`
-  fs.writeFileSync(temporary, JSON.stringify(subscriptions, null, 2))
-  fs.renameSync(temporary, DATA_FILE)
-}
+let subscriptions = []
+async function hydrateSubscriptions() { subscriptions = await loadCollection('subscriptions') }
+function saveSubscriptions() { return replaceCollection('subscriptions', subscriptions, (row) => `${row.funderAddress.toLowerCase()}:${row.creatorSigner.toLowerCase()}`) }
 
 function text(value, max = 140) {
   return typeof value === 'string' ? value.trim().slice(0, max) : ''
@@ -126,7 +111,7 @@ function signalSwarms(rows, now = Date.now()) {
   })
 }
 
-function subscribeCtrl(req, res) {
+async function subscribeCtrl(req, res) {
   const funderAddress = text(req.body && req.body.funderAddress, 80)
   const signal = getSignal(text(req.body && req.body.signalId, 80))
   if (!validWallet(funderAddress) || !signal) return res.status(400).json({ error: 'InvalidSubscription', message: 'A wallet and verified strategy ID are required.' })
@@ -134,7 +119,7 @@ function subscribeCtrl(req, res) {
   const key = `${funderAddress.toLowerCase()}:${signal.signer.toLowerCase()}`
   subscriptions = subscriptions.filter((row) => `${row.funderAddress.toLowerCase()}:${row.creatorSigner.toLowerCase()}` !== key)
   if (enabled) subscriptions.push({ funderAddress, creatorSigner: signal.signer, signalId: signal.id, createdAt: new Date().toISOString() })
-  saveSubscriptions()
+  await saveSubscriptions()
   res.json({ subscribed: enabled, creatorSigner: signal.signer, signalId: signal.id })
 }
 
@@ -174,4 +159,4 @@ async function roomCtrl(req, res) {
   res.json({ signal: await freshSignalSummary(signal) })
 }
 
-module.exports = { subscribeCtrl, radarCtrl, terminalCtrl, roomCtrl, signalDecay, signalSwarms, _test: { signalDecay } }
+module.exports = { subscribeCtrl, radarCtrl, terminalCtrl, roomCtrl, signalDecay, signalSwarms, hydrateSubscriptions, _test: { signalDecay } }

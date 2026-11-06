@@ -2,13 +2,11 @@
 // A World proof establishes one unique human for one Plan B caller wallet; the
 // wallet signature still binds each individual strategy to that wallet.
 require('dotenv').config({ path: __dirname + '/.env' })
-const fs = require('fs')
-const path = require('path')
+const { loadCollection, replaceCollection } = require('./database.js')
 const { verifyMessage } = require('ethers')
 const { signRequest } = require('@worldcoin/idkit-core/signing')
 const { hashSignal } = require('@worldcoin/idkit-core/hashing')
 
-const DATA_FILE = path.join(__dirname, 'data', 'world-human.json')
 const VERIFY_URL = 'https://developer.world.org/api/v4/verify'
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/
 
@@ -30,21 +28,9 @@ function enrollmentMessage(signer, nonce) {
   ].join('\n')
 }
 
-function readRegistry() {
-  try {
-    const value = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'))
-    return Array.isArray(value) ? value : []
-  } catch { return [] }
-}
-
-let registry = readRegistry()
-
-function saveRegistry() {
-  fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true })
-  const temporary = `${DATA_FILE}.tmp`
-  fs.writeFileSync(temporary, JSON.stringify(registry, null, 2))
-  fs.renameSync(temporary, DATA_FILE)
-}
+let registry = []
+async function hydrateWorldHuman() { registry = await loadCollection('world_human') }
+function saveRegistry() { return replaceCollection('world_human', registry, (record) => `${record.action}:${record.signer}`) }
 
 function publicRecord(record) {
   if (!record) return null
@@ -168,8 +154,8 @@ async function verifyCtrl(req, res) {
   const record = { signer, nullifier, action: action(), environment: environment(), verifiedAt: new Date().toISOString() }
   registry = registry.filter((item) => !(item.action === action() && item.signer === signer))
   registry.push(record)
-  saveRegistry()
+  await saveRegistry()
   res.status(201).json({ humanVerification: publicRecord(record) })
 }
 
-module.exports = { statusCtrl, rpContextCtrl, verifyCtrl, humanVerificationFor, worldVerificationRequired: required, enrollmentMessage }
+module.exports = { statusCtrl, rpContextCtrl, verifyCtrl, humanVerificationFor, worldVerificationRequired: required, enrollmentMessage, hydrateWorldHuman }

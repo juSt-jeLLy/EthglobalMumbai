@@ -28,7 +28,9 @@ function startFlashOrderStream() {
         heartbeatTimer = setTimeout(() => socket && socket.terminate(), 5000)
       }
       if ((frame.type === 'snapshot' || frame.type === 'update') && Array.isArray(frame.orders)) {
-        frame.orders.forEach(applyOrderUpdate)
+        for (const order of frame.orders) {
+          void applyOrderUpdate(order).catch((error) => console.error('[flash-ws] could not persist order update:', error.message))
+        }
       }
       if (frame.type === 'error') {
         console.warn(`[flash-ws] ${frame.code}: ${frame.message}`)

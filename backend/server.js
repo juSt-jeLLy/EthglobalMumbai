@@ -4,11 +4,12 @@ const cors = require('cors')
 const { flashProxyCtrl } = require('./flash.js')
 const { parsePlanCtrl } = require('./parser.js')
 const { tokenSecurityCtrl } = require('./security.js')
-const { createPlanCtrl, listPlansCtrl, socialProofCtrl, leaderboardCtrl, planEventsCtrl } = require('./plans.js')
+const { createPlanCtrl, listPlansCtrl, socialProofCtrl, leaderboardCtrl, planEventsCtrl, hydratePlans } = require('./plans.js')
 const { startFlashOrderStream } = require('./flash-stream.js')
-const { prepareSignalCtrl, createSignalCtrl, captureSignalCtrl, attachSourceCtrl, prepareRevisionCtrl, createRevisionCtrl, passportCtrl, creatorProfileCtrl, getSignalCtrl, startSourceMonitor } = require('./signals.js')
-const { subscribeCtrl, radarCtrl, terminalCtrl, roomCtrl } = require('./radar.js')
-const { statusCtrl: worldStatusCtrl, rpContextCtrl: worldRpContextCtrl, verifyCtrl: verifyWorldHumanCtrl } = require('./world-human.js')
+const { prepareSignalCtrl, createSignalCtrl, captureSignalCtrl, attachSourceCtrl, prepareRevisionCtrl, createRevisionCtrl, passportCtrl, creatorProfileCtrl, getSignalCtrl, startSourceMonitor, hydrateSignals } = require('./signals.js')
+const { subscribeCtrl, radarCtrl, terminalCtrl, roomCtrl, hydrateSubscriptions } = require('./radar.js')
+const { statusCtrl: worldStatusCtrl, rpContextCtrl: worldRpContextCtrl, verifyCtrl: verifyWorldHumanCtrl, hydrateWorldHuman } = require('./world-human.js')
+const { initDatabase, closeDatabase } = require('./database.js')
 const app = express()
 const port = process.env.PORT || 8000
 
@@ -73,8 +74,22 @@ app.use((error, req, res, next) => {
   })
 })
 
-app.listen(port, () => {
-  console.log(`Plan B backend listening on port ${port}`)
-  startFlashOrderStream()
-  startSourceMonitor()
+async function start() {
+  await initDatabase()
+  // Hydrate before listening so every route sees the same durable state.
+  await hydrateWorldHuman()
+  await Promise.all([hydratePlans(), hydrateSignals(), hydrateSubscriptions()])
+  const server = app.listen(port, () => {
+    console.log(`Plan B backend listening on port ${port} (PostgreSQL connected)`)
+    startFlashOrderStream()
+    startSourceMonitor()
+  })
+  const shutdown = () => server.close(() => { void closeDatabase().finally(() => process.exit(0)) })
+  process.once('SIGINT', shutdown)
+  process.once('SIGTERM', shutdown)
+}
+
+start().catch((error) => {
+  console.error('[server] PostgreSQL startup failed:', error.message)
+  process.exitCode = 1
 })

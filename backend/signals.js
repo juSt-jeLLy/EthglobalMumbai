@@ -1,31 +1,16 @@
-const fs = require('fs')
-const path = require('path')
 const crypto = require('crypto')
+const { loadCollection, replaceCollection } = require('./database.js')
 const { verifyMessage } = require('ethers')
 const { validateDraft } = require('./parser.js')
 const { searchAssets } = require('./flash.js')
 const { humanVerificationFor, worldVerificationRequired } = require('./world-human.js')
 
-const DATA_DIR = path.join(__dirname, 'data')
-const DATA_FILE = path.join(DATA_DIR, 'signals.json')
-
-function readSignals() {
-  try {
-    const value = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'))
-    return Array.isArray(value) ? value : []
-  } catch { return [] }
-}
-
-let signals = readSignals()
+let signals = []
 let sourceMonitorRunning = false
 let sourceMonitorTimer = null
 
-function saveSignals() {
-  fs.mkdirSync(DATA_DIR, { recursive: true })
-  const temporary = `${DATA_FILE}.tmp`
-  fs.writeFileSync(temporary, JSON.stringify(signals, null, 2))
-  fs.renameSync(temporary, DATA_FILE)
-}
+async function hydrateSignals() { signals = await loadCollection('signals') }
+function saveSignals() { return replaceCollection('signals', signals, (signal) => signal.id) }
 
 function canonicalMessage(result) {
   const plan = result.draft
@@ -128,7 +113,7 @@ async function settlePassport(signal) {
       returnPercent: move * (passport.terms.side === 'sell' ? -100 : 100),
       outcome: inFavor ? 'price_in_favor' : 'price_against',
     }
-    saveSignals()
+    await saveSignals()
   }
   return { ...passport, currentPrice }
 }
@@ -155,10 +140,10 @@ async function checkAvailability(signal) {
         checks: [...(passport.sourceVerification && passport.sourceVerification.checks || []), { status: verification, checkedAt: new Date().toISOString() }].slice(-6),
       }
     }
-    saveSignals()
+    await saveSignals()
   } catch {
     passport.availability = { ...(passport.availability || {}), status: 'unavailable', checks: passport.availability && passport.availability.checks || [] }
-    saveSignals()
+    await saveSignals()
   }
   return passport.availability
 }
@@ -242,7 +227,7 @@ async function createSignalCtrl(req, res) {
       humanVerification: humanVerification || { status: 'not_verified' },
     }
     signals.push(signal)
-    saveSignals()
+    await saveSignals()
     const action = result.draft.side === 'buy' ? 'Buy' : 'Sell'
     const entry = result.draft.entryType === 'market'
       ? 'at market'
@@ -252,7 +237,11 @@ async function createSignalCtrl(req, res) {
           ? `when price crosses ${result.draft.triggerDirection} ${result.draft.triggerPrice}`
           : `${result.draft.entryType} at ${result.draft.entryPrice || result.draft.triggerPrice || 'market'}`
     const protection = result.draft.stopLoss && result.draft.takeProfit ? ` · stop ${result.draft.stopLoss} · target ${result.draft.takeProfit}` : result.draft.trailPercent ? ` · trail ${result.draft.trailPercent}%` : ''
-    const callerLabel = humanVerification ? 'Verified Human Caller' : 'Wallet-signed Caller'
+    const callerLabel = humanVerification && humanVerification.environment === 'production'
+      ? 'Verified Human Caller'
+      : humanVerification
+        ? 'Wallet-signed Caller · World simulator tested'
+        : 'Wallet-signed Caller'
     res.status(201).json({ signal, tweetText: `${action} $${result.draft.token} on ${result.draft.chain} ${entry}${protection}\n\n${callerLabel} · Follow this ${result.strategy.summary} strategy on Plan B · planb:${id}` })
   } catch (error) {
     res.status(Number(error.status) || 422).json({ error: 'InvalidPlan', message: error.message })
@@ -281,7 +270,7 @@ async function captureSignalCtrl(req, res) {
       passport,
     }
     signals.push(signal)
-    saveSignals()
+    await saveSignals()
     res.status(201).json({ signal, passport })
   } catch (error) {
     res.status(Number(error.status) || 422).json({ error: 'InvalidSignal', message: error.message })
@@ -307,7 +296,7 @@ async function attachSourceCtrl(req, res) {
   signal.passport.textHash = sourceText ? crypto.createHash('sha256').update(sourceText).digest('hex') : signal.passport.textHash
   signal.passport.availability = { status: 'not_checked', checks: [] }
   signal.passport.sourceVerification = { status: 'browser_observed', checks: [{ status: 'browser_observed', checkedAt: new Date().toISOString() }] }
-  saveSignals()
+  await saveSignals()
   // Public confirmation is best-effort and never blocks use of a signed plan.
   // The resulting status tells viewers whether the public source was verified.
   await checkAvailability(signal)
@@ -337,7 +326,7 @@ async function createRevisionCtrl(req, res) {
     if (!/^0x[a-f0-9]+$/i.test(signature) || verifyMessage(message, signature).toLowerCase() !== signal.signer) return res.status(401).json({ error: 'InvalidSignature', message: 'Only the original Caller Card signer can publish a revision.' })
     const record = { revision, createdAt: new Date().toISOString(), reason: reason || null, draft: result.draft, strategy: result.strategy, recommendation: result.recommendation, signature }
     signal.revisions = [...(signal.revisions || []), record]
-    saveSignals()
+    await saveSignals()
     res.status(201).json({ signalId: signal.id, revision: record })
   } catch (error) { res.status(Number(error.status) || 422).json({ error: 'InvalidRevision', message: error.message }) }
 }
@@ -394,4 +383,4 @@ function getSignalCtrl(req, res) {
 
 function listObservedSignals() { return signals.filter((signal) => signal && !signal.verified) }
 
-module.exports = { prepareSignalCtrl, createSignalCtrl, captureSignalCtrl, attachSourceCtrl, prepareRevisionCtrl, createRevisionCtrl, passportCtrl, creatorProfileCtrl, getSignalCtrl, getSignal, listSignals, listObservedSignals, settlePassport, checkAvailability, sweepSourceAvailability, startSourceMonitor, canonicalRevisionMessage }
+module.exports = { prepareSignalCtrl, createSignalCtrl, captureSignalCtrl, attachSourceCtrl, prepareRevisionCtrl, createRevisionCtrl, passportCtrl, creatorProfileCtrl, getSignalCtrl, getSignal, listSignals, listObservedSignals, settlePassport, checkAvailability, sweepSourceAvailability, startSourceMonitor, canonicalRevisionMessage, hydrateSignals }
