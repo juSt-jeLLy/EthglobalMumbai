@@ -99,6 +99,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.action === "signal") {
+    const method = message.method || "GET";
+    const path = String(message.path || "/signals");
+    const query = method === "GET" && message.body ? `?${new URLSearchParams(message.body)}` : "";
+    fetch(`${BACKEND_URL}${path}${query}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      ...(method !== "GET" && { body: JSON.stringify(message.body || {}) }),
+    })
+      .then(async (response) => {
+        const text = await response.text();
+        let body;
+        try { body = JSON.parse(text); } catch { body = { message: text }; }
+        sendResponse({ ok: response.ok, status: response.status, body });
+      })
+      .catch((error) => sendResponse({ ok: false, status: 0, body: { message: `Plan B backend not reachable at ${BACKEND_URL} (${error.message})` } }));
+    return true;
+  }
+
   if (message.action === "flash") {
     const method = message.method || "POST";
     const query = method === "GET" ? `?${new URLSearchParams(message.body || {})}` : "";

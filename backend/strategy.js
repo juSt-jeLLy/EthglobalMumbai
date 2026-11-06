@@ -101,4 +101,20 @@ function compileStrategy(draft, asset) {
   }
 }
 
-module.exports = { compileStrategy, ENTRY_TYPES, STRATEGY_TYPES, EXIT_TYPES, ATTACHABLE_ENTRIES }
+// A recommendation is an explanation of the Flash order shape, never an
+// authorization to trade. The user can always edit the order before signing.
+function recommendExecution(draft, asset) {
+  const current = positive(asset && asset.price)
+  const entry = positive(draft.entryPrice) || positive(draft.triggerPrice)
+  const drift = current && entry ? (current - entry) / entry : null
+  const protectedEntry = draft.exitType === 'bracket' && positive(draft.stopLoss) && positive(draft.takeProfit)
+  if (draft.entryType === 'stop') return { state: 'ready', title: 'Confirm breakout', rationale: 'The caller supplied a trigger level, so wait for price confirmation.', orderType: 'stop', attachBracket: false }
+  if (['stop-loss', 'take-profit', 'bracket', 'trailing-stop', 'trailing-stop-limit'].includes(draft.entryType)) return { state: 'ready', title: 'Protect an existing position', rationale: 'This is an exit/protection instruction, not a new spot entry.', orderType: draft.entryType, attachBracket: false }
+  if (draft.entryType === 'limit') return { state: 'ready', title: 'Wait for the pullback', rationale: 'Use the caller’s stated resting price instead of chasing the current quote.', orderType: 'limit', attachBracket: protectedEntry }
+  if (draft.entryType === 'twap') return { state: 'ready', title: 'Scale in with TWAP', rationale: 'Spread execution across the stated duration and keep the stated protection.', orderType: 'twap', attachBracket: protectedEntry }
+  if (draft.side === 'buy' && drift !== null && drift > 0.03) return { state: 'caution', title: 'Avoid chasing: scale in', rationale: `Current price is ${(drift * 100).toFixed(1)}% above the stated entry. Consider a TWAP with the same stop and target.`, orderType: 'twap', attachBracket: protectedEntry }
+  if (protectedEntry) return { state: 'ready', title: 'Protected entry', rationale: 'Flash can attach the stated stop and target to this entry from its first fill.', orderType: 'market', attachBracket: true }
+  return { state: 'ready', title: 'Review market entry', rationale: 'No resting level or protection was stated. Add protection before signing if appropriate.', orderType: 'market', attachBracket: false }
+}
+
+module.exports = { compileStrategy, recommendExecution, ENTRY_TYPES, STRATEGY_TYPES, EXIT_TYPES, ATTACHABLE_ENTRIES }

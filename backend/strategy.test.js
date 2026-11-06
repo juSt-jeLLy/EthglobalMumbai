@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { compileStrategy } = require('./strategy.js')
+const { compileStrategy, recommendExecution } = require('./strategy.js')
 
 test('compiles a capped TWAP with an atomic attached bracket', () => {
   const strategy = compileStrategy({ entryType: 'twap', entryPrice: 2300, durationHours: 2, bucketCount: 12, stopLoss: 2180, takeProfit: 2600, exitType: 'bracket' })
@@ -30,4 +30,17 @@ test('does not mistake a protective stop for a market-entry trigger', () => {
   const strategy = compileStrategy({ entryType: 'market', triggerPrice: 1800, stopLoss: 1800, takeProfit: 3000, exitType: 'bracket' })
   assert.equal(strategy.entry.triggers, undefined)
   assert.equal(strategy.protection.type, 'attached-bracket')
+})
+
+test('recommends a Flash bracket for a fresh protected entry', () => {
+  const recommendation = recommendExecution({ side: 'buy', entryType: 'market', stopLoss: 1800, takeProfit: 3000, exitType: 'bracket' }, { price: 2200 })
+  assert.equal(recommendation.title, 'Protected entry')
+  assert.equal(recommendation.orderType, 'market')
+  assert.equal(recommendation.attachBracket, true)
+})
+
+test('recommends TWAP rather than chasing a stale market entry', () => {
+  const recommendation = recommendExecution({ side: 'buy', entryType: 'market', entryPrice: 100, exitType: 'none' }, { price: 110 })
+  assert.equal(recommendation.title, 'Avoid chasing: scale in')
+  assert.equal(recommendation.orderType, 'twap')
 })

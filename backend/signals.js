@@ -3,6 +3,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { verifyMessage } = require('ethers')
 const { validateDraft } = require('./parser.js')
+const { searchAssets } = require('./flash.js')
 
 const DATA_DIR = path.join(__dirname, 'data')
 const DATA_FILE = path.join(DATA_DIR, 'signals.json')
@@ -42,6 +43,94 @@ function canonicalMessage(result) {
   ].join('\n')
 }
 
+function clean(value, max = 2000) {
+  return typeof value === 'string' ? value.trim().slice(0, max) : ''
+}
+
+function price(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : null
+}
+
+function median(values) {
+  if (!values.length) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+function passportFor(result, context = {}) {
+  const createdAt = new Date().toISOString()
+  const expiryHours = price(result.draft.expiryHours) || 24
+  const text = clean(context.text, 4000)
+  return {
+    version: 1,
+    capturedAt: createdAt,
+    textHash: text ? crypto.createHash('sha256').update(text).digest('hex') : null,
+    tweetId: clean(context.tweetId, 40) || null,
+    authorHandle: clean(context.authorHandle, 30).replace(/^@/, '').toLowerCase() || null,
+    sourceUrl: clean(context.tweetId, 40) && clean(context.authorHandle, 30) ? `https://x.com/${clean(context.authorHandle, 30).replace(/^@/, '')}/status/${clean(context.tweetId, 40)}` : null,
+    asset: { symbol: result.asset.symbol, chain: result.asset.chain, address: result.asset.address },
+    integrity: result.integrity || { status: 'unknown', action: 'review', message: 'Contract integrity was not recorded.' },
+    entryPrice: price(result.asset.price),
+    terms: {
+      side: result.draft.side,
+      entryType: result.draft.entryType,
+      entryPrice: price(result.draft.entryPrice),
+      stopLoss: price(result.draft.stopLoss),
+      takeProfit: price(result.draft.takeProfit),
+      expiresAt: new Date(Date.now() + expiryHours * 3600000).toISOString(),
+    },
+    availability: { status: clean(context.tweetId, 40) ? 'not_checked' : 'unattached', checks: [] },
+    settlement: null,
+  }
+}
+
+function fingerprint(passport) {
+  return passport.tweetId || `${passport.textHash || crypto.randomUUID()}:${passport.asset.chain}:${passport.asset.address}`
+}
+
+async function settlePassport(signal) {
+  const passport = signal.passport
+  if (!passport) return null
+  let currentPrice = price(signal.asset && signal.asset.price)
+  try {
+    const found = await searchAssets({ query: passport.asset.address, chain: passport.asset.chain, limit: 10 })
+    const asset = (found.assets || []).find((item) => String(item.address).toLowerCase() === String(passport.asset.address).toLowerCase())
+    currentPrice = price(asset && asset.price) || currentPrice
+  } catch { /* A previously captured price is still useful evidence. */ }
+  const expiresAt = Date.parse(passport.terms && passport.terms.expiresAt)
+  if (!passport.settlement && Number.isFinite(expiresAt) && Date.now() >= expiresAt && currentPrice && passport.entryPrice) {
+    const move = (currentPrice - passport.entryPrice) / passport.entryPrice
+    const inFavor = passport.terms.side === 'sell' ? move < 0 : move > 0
+    passport.settlement = {
+      settledAt: new Date().toISOString(),
+      method: 'flash_mark_at_expiry_check',
+      markPrice: currentPrice,
+      returnPercent: move * (passport.terms.side === 'sell' ? -100 : 100),
+      outcome: inFavor ? 'price_in_favor' : 'price_against',
+    }
+    saveSignals()
+  }
+  return { ...passport, currentPrice }
+}
+
+async function checkAvailability(signal) {
+  const passport = signal && signal.passport
+  if (!passport || !passport.sourceUrl) return passport && passport.availability
+  try {
+    const response = await fetch(`https://publish.twitter.com/oembed?url=${encodeURIComponent(passport.sourceUrl)}`, { signal: AbortSignal.timeout(8000) })
+    const status = response.ok ? 'available' : response.status === 404 ? 'not_public' : 'unavailable'
+    const checks = [...(passport.availability.checks || []), { status, checkedAt: new Date().toISOString() }].slice(-6)
+    const consecutiveMissing = checks.slice(-2).length === 2 && checks.slice(-2).every((check) => check.status === 'not_public')
+    passport.availability = { status: consecutiveMissing ? 'removed' : status, checks }
+    saveSignals()
+  } catch {
+    passport.availability = { ...(passport.availability || {}), status: 'unavailable', checks: passport.availability && passport.availability.checks || [] }
+  }
+  return passport.availability
+}
+
 async function prepareSignalCtrl(req, res) {
   try {
     const result = await validateDraft({ confidence: 1, missing: [], ambiguous: [], ...(req.body || {}) })
@@ -72,6 +161,7 @@ async function createSignalCtrl(req, res) {
       version: 1,
       createdAt: new Date().toISOString(),
     }
+    signal.passport = passportFor(result, { authorHandle: req.body && req.body.authorHandle, tweetId: req.body && req.body.tweetId, text: req.body && req.body.text })
     signals.push(signal)
     saveSignals()
     const action = result.draft.side === 'buy' ? 'Buy' : 'Sell'
@@ -89,6 +179,87 @@ async function createSignalCtrl(req, res) {
   }
 }
 
+// Captures a parsed social signal before any follower trades it. This makes
+// caller history evidence-based rather than dependent on whether somebody
+// happened to copy the strategy.
+async function captureSignalCtrl(req, res) {
+  try {
+    const context = req.body && req.body.context || {}
+    const result = await validateDraft({ confidence: 1, missing: [], ambiguous: [], ...((req.body && req.body.plan) || {}) }, { sourceText: context.text })
+    const passport = passportFor(result, context)
+    const key = fingerprint(passport)
+    const existing = signals.find((signal) => signal.passport && fingerprint(signal.passport) === key)
+    if (existing) return res.json({ signal: existing, passport: await settlePassport(existing) })
+    const signal = {
+      id: crypto.randomUUID(),
+      ...result,
+      signer: null,
+      signature: null,
+      verified: false,
+      version: 1,
+      createdAt: new Date().toISOString(),
+      passport,
+    }
+    signals.push(signal)
+    saveSignals()
+    res.status(201).json({ signal, passport })
+  } catch (error) {
+    res.status(Number(error.status) || 422).json({ error: 'InvalidSignal', message: error.message })
+  }
+}
+
+// A Caller Card is signed before it is posted. The extension attaches the
+// public X source afterwards, without changing the signed strategy itself.
+function attachSourceCtrl(req, res) {
+  const signal = getSignal(String(req.params.id || ''))
+  if (!signal) return res.status(404).json({ error: 'NotFound', message: 'Signal not found.' })
+  if (!signal.verified || !signal.passport) return res.status(409).json({ error: 'NotVerified', message: 'Only a signed Caller Card can be linked to a public post.' })
+  const context = req.body && req.body.context || {}
+  const tweetId = clean(context.tweetId, 40)
+  const authorHandle = clean(context.authorHandle, 30).replace(/^@/, '').toLowerCase()
+  const sourceText = clean(context.text, 4000)
+  if (!tweetId || !authorHandle) return res.status(400).json({ error: 'InvalidSource', message: 'tweetId and authorHandle are required.' })
+  if (signal.passport.tweetId && signal.passport.tweetId !== tweetId) return res.status(409).json({ error: 'SourceAlreadyAttached', message: 'This Caller Card is already linked to a different post.' })
+  signal.passport.tweetId = tweetId
+  signal.passport.authorHandle = authorHandle
+  signal.passport.sourceUrl = `https://x.com/${authorHandle}/status/${tweetId}`
+  signal.passport.textHash = sourceText ? crypto.createHash('sha256').update(sourceText).digest('hex') : signal.passport.textHash
+  signal.passport.availability = { status: 'not_checked', checks: [] }
+  saveSignals()
+  res.json({ signalId: signal.id, passport: signal.passport })
+}
+
+async function passportCtrl(req, res) {
+  const signal = getSignal(String(req.params.id || ''))
+  if (!signal) return res.status(404).json({ error: 'NotFound', message: 'Signal not found.' })
+  if (req.query.refresh === 'availability') await checkAvailability(signal)
+  res.json({ signalId: signal.id, verified: signal.verified, passport: await settlePassport(signal) })
+}
+
+async function creatorProfileCtrl(req, res) {
+  const requested = clean(req.params.creator, 80).toLowerCase()
+  const rows = signals.filter((signal) => String(signal.signer || '').toLowerCase() === requested || String(signal.passport && signal.passport.authorHandle || '').toLowerCase() === requested)
+  // Only signed Caller Cards earn reputation. Parsed public posts are retained
+  // as observed context, never treated as proof that an X account authored it.
+  const verifiedRows = rows.filter((signal) => signal.verified)
+  const passports = await Promise.all(verifiedRows.map(settlePassport))
+  const settled = passports.filter((passport) => passport && passport.settlement)
+  const wins = settled.filter((passport) => passport.settlement.outcome === 'price_in_favor').length
+  const deleted = passports.filter((passport) => passport && passport.availability && passport.availability.status === 'removed').length
+  const returns = settled.map((passport) => passport.settlement.returnPercent).filter(Number.isFinite)
+  res.json({
+    creator: requested,
+    verifiedIdentity: verifiedRows.some((signal) => String(signal.signer || '').toLowerCase() === requested),
+    signals: verifiedRows.length,
+    observedSignals: rows.filter((signal) => !signal.verified).length,
+    scored: settled.length,
+    hitRate: settled.length ? wins / settled.length : null,
+    medianReturnPercent: median(returns),
+    deletedSignals: deleted,
+    records: passports.filter(Boolean).sort((a, b) => b.capturedAt.localeCompare(a.capturedAt)).slice(0, 30),
+  })
+}
+
 function getSignal(id) {
   return signals.find((signal) => signal.id === id) || null
 }
@@ -103,4 +274,4 @@ function getSignalCtrl(req, res) {
   res.json({ signal })
 }
 
-module.exports = { prepareSignalCtrl, createSignalCtrl, getSignalCtrl, getSignal, listSignals }
+module.exports = { prepareSignalCtrl, createSignalCtrl, captureSignalCtrl, attachSourceCtrl, passportCtrl, creatorProfileCtrl, getSignalCtrl, getSignal, listSignals, settlePassport, checkAvailability }

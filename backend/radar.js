@@ -1,7 +1,7 @@
 const fs = require('fs')
 const path = require('path')
 const { searchAssets } = require('./flash.js')
-const { getSignal, listSignals } = require('./signals.js')
+const { getSignal, listSignals, settlePassport } = require('./signals.js')
 const { signalRoom } = require('./plans.js')
 
 const DATA_DIR = path.join(__dirname, 'data')
@@ -71,6 +71,7 @@ function signalSummary(signal, currentPrice = null, now = Date.now()) {
   return {
     id: signal.id,
     signer: signal.signer,
+    verified: !!signal.verified,
     createdAt: signal.createdAt,
     version: signal.version || 1,
     asset: { symbol: asset.symbol, name: asset.name || asset.symbol, chain: asset.chain, address: asset.address, price: currentPrice || price(asset.price) },
@@ -88,7 +89,10 @@ async function freshSignalSummary(signal) {
     const matched = (result.assets || []).find((asset) => String(asset.address).toLowerCase() === String(signal.asset.address).toLowerCase()) || result.assets && result.assets[0]
     currentPrice = price(matched && matched.price) || currentPrice
   } catch { /* Existing signed asset data still gives a usable decay estimate. */ }
-  return signalSummary(signal, currentPrice)
+  const summary = signalSummary(signal, currentPrice)
+  summary.passport = await settlePassport(signal)
+  summary.recommendation = signal.recommendation || null
+  return summary
 }
 
 function signalSwarms(rows, now = Date.now()) {
@@ -138,10 +142,28 @@ async function radarCtrl(req, res) {
   res.json({ signals, swarms: signalSwarms(allRecent), followedCreators: [...new Set(followed)].length })
 }
 
+// Public, read-only terminal for signed Caller Cards. It deliberately excludes
+// unsigned observations so a caller's public track record cannot be gamed.
+async function terminalCtrl(req, res) {
+  const entryType = text(req.query.entryType, 40).toLowerCase()
+  const freshness = text(req.query.freshness, 40).toLowerCase()
+  const sort = text(req.query.sort, 40).toLowerCase() || 'newest'
+  let rows = await Promise.all(listSignals()
+    .filter((signal) => signal.verified)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, 80)
+    .map(freshSignalSummary))
+  if (entryType) rows = rows.filter((row) => String(row.draft && row.draft.entryType || '').toLowerCase() === entryType)
+  if (freshness) rows = rows.filter((row) => String(row.decay && row.decay.state || '').toLowerCase() === freshness)
+  if (sort === 'followed') rows.sort((a, b) => Number(b.room && b.room.followers || 0) - Number(a.room && a.room.followers || 0))
+  if (sort === 'fresh') rows.sort((a, b) => (a.decay.state === 'fresh' ? -1 : 0) - (b.decay.state === 'fresh' ? -1 : 0))
+  res.json({ signals: rows.slice(0, 50), swarms: signalSwarms(rows), note: 'Only wallet-signed Caller Cards appear in Radar. Followers always choose their own size and sign from their own wallet.' })
+}
+
 async function roomCtrl(req, res) {
   const signal = getSignal(text(req.params.id, 80))
   if (!signal) return res.status(404).json({ error: 'NotFound', message: 'Verified strategy not found.' })
   res.json({ signal: await freshSignalSummary(signal) })
 }
 
-module.exports = { subscribeCtrl, radarCtrl, roomCtrl, signalDecay, signalSwarms, _test: { signalDecay } }
+module.exports = { subscribeCtrl, radarCtrl, terminalCtrl, roomCtrl, signalDecay, signalSwarms, _test: { signalDecay } }

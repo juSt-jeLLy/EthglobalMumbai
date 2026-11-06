@@ -1,6 +1,6 @@
 require('dotenv').config({ path: __dirname + '/.env' })
 const { searchAssets } = require('./flash.js')
-const { compileStrategy, ENTRY_TYPES, STRATEGY_TYPES, EXIT_TYPES } = require('./strategy.js')
+const { compileStrategy, recommendExecution, ENTRY_TYPES, STRATEGY_TYPES, EXIT_TYPES } = require('./strategy.js')
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions'
 const CONFIDENCE_FLOOR = 0.65
@@ -54,6 +54,14 @@ function normalizeChain(value) {
 function finitePositive(value) {
   const number = Number(value)
   return Number.isFinite(number) && number > 0 ? number : null
+}
+
+function contractReference(value) {
+  const text = cleanText(value)
+  const evm = text.match(/\b0x[a-fA-F0-9]{40}\b/)
+  if (evm) return { kind: 'evm', address: evm[0].toLowerCase() }
+  const solana = text.match(/(?:^|\s)([1-9A-HJ-NP-Za-km-z]{32,44})(?=$|\s|[.,;:!?])/)
+  return solana ? { kind: 'solana', address: solana[1] } : null
 }
 
 function uniqueStrings(values) {
@@ -200,7 +208,7 @@ function chooseAsset(assets, token, requestedChain) {
   return candidates.sort((a, b) => Number(b.liquidity || 0) - Number(a.liquidity || 0))[0] || null
 }
 
-async function validateDraft(rawDraft) {
+async function validateDraft(rawDraft, options = {}) {
   const draft = {
     token: rawDraft.token ? cleanText(String(rawDraft.token)).replace(/^\$/, '') : null,
     chain: normalizeChain(rawDraft.chain),
@@ -248,9 +256,20 @@ async function validateDraft(rawDraft) {
     throw unclearPlan({ confidence: draft.confidence, missing: draft.missing, ambiguous: draft.ambiguous })
   }
 
-  const assets = await searchFlashAssets(draft.token, draft.chain)
-  const asset = chooseAsset(assets, draft.token, draft.chain)
+  const sourceText = cleanText(options.sourceText || '')
+  const contract = contractReference(sourceText)
+  const assets = await searchFlashAssets(contract ? contract.address : draft.token, draft.chain)
+  const asset = contract
+    ? (assets.find((candidate) => String(candidate.address || '').toLowerCase() === contract.address) || null)
+    : chooseAsset(assets, draft.token, draft.chain)
   if (!asset) throw Object.assign(new Error(`Flash does not list ${draft.token}${draft.chain ? ` on ${draft.chain}` : ''}.`), { status: 422 })
+  const requestedSymbol = String(rawDraft.token || '').replace(/^\$/, '').trim().toUpperCase()
+  const claimedSymbol = requestedSymbol && !/^0X[0-9A-F]{40}$/i.test(requestedSymbol) ? requestedSymbol : null
+  const integrity = contract
+    ? claimedSymbol && claimedSymbol !== String(asset.symbol || '').toUpperCase()
+      ? { status: 'mismatch', action: 'block', contract: contract.address, message: `The post claims ${claimedSymbol}, but this contract resolves to ${asset.symbol}.` }
+      : { status: 'verified_contract', action: 'eligible', contract: contract.address, message: `Contract verified as ${asset.symbol} on ${asset.chain}.` }
+    : { status: 'symbol_resolved', action: 'eligible', contract: null, message: `${asset.symbol} was resolved by symbol through Flash; no contract was supplied in the post.` }
   draft.token = asset.symbol
   draft.chain = asset.chain
 
@@ -276,6 +295,7 @@ async function validateDraft(rawDraft) {
   }
 
   const strategy = compileStrategy(draft, asset)
+  const recommendation = recommendExecution(draft, asset)
   return {
     draft: { ...draft, missing: uniqueStrings(draft.missing), ambiguous: uniqueStrings(draft.ambiguous) },
     asset: {
@@ -289,7 +309,9 @@ async function validateDraft(rawDraft) {
       imageUrl: asset.imageUrl || null,
       riskFlagged: !!asset.riskFlagged,
     },
+    integrity,
     strategy,
+    recommendation,
   }
 }
 
@@ -302,20 +324,31 @@ async function parsePlanCtrl(req, res) {
       const { getSignal } = require('./signals.js')
       const signal = getSignal(signalId[1])
       if (!signal) return res.status(404).json({ error: 'UnknownCallerPlan', message: 'This verified caller plan was not found.' })
-      return res.json({ draft: signal.draft, asset: signal.asset, strategy: signal.strategy, verified: true, signalId: signal.id, strategyVersion: signal.version || 1, signer: signal.signer })
+      return res.json({
+        draft: signal.draft,
+        asset: signal.asset,
+        strategy: signal.strategy,
+        integrity: signal.integrity || signal.passport && signal.passport.integrity || null,
+        recommendation: signal.recommendation || null,
+        passport: signal.passport || null,
+        verified: true,
+        signalId: signal.id,
+        strategyVersion: signal.version || 1,
+        signer: signal.signer,
+      })
     }
     const voiceMode = req.body && req.body.mode === 'voice'
     let parsed
     try {
       parsed = await callGroq(tweetText, voiceMode ? 'voice' : 'tweet')
-      return res.json(await validateDraft(parsed))
+      return res.json(await validateDraft(parsed, { sourceText: tweetText }))
     } catch (error) {
       // Groq is the general parser, but an explicit order must not be demoted
       // into manual mode when structured output flakes. Recover only facts the
       // tweet states plainly, then run the same Flash asset/price validation.
       const fallback = voiceFallbackDraft(tweetText)
       if (!fallback) throw error
-      return res.json(await validateDraft(fallback))
+      return res.json(await validateDraft(fallback, { sourceText: tweetText }))
     }
   } catch (error) {
     const status = Number(error.status) || 500
@@ -330,4 +363,4 @@ async function parsePlanCtrl(req, res) {
   }
 }
 
-module.exports = { parsePlanCtrl, validateDraft, PLAN_SCHEMA, voiceFallbackDraft }
+module.exports = { parsePlanCtrl, validateDraft, contractReference, PLAN_SCHEMA, voiceFallbackDraft }

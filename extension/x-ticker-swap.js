@@ -465,6 +465,17 @@
     });
   }
 
+  function signalApi(path, body = {}, method = "GET") {
+    if (!inExtension) return Promise.reject(new Error("Signal evidence needs the Plan B extension"));
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ action: "signal", path, body, method }, (response) => {
+        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+        if (!response || !response.ok) return reject(Object.assign(new Error(response && response.body && response.body.message || "Signal evidence is unavailable"), { status: response && response.status }));
+        resolve(response.body);
+      });
+    });
+  }
+
   function typedDataPayload(value) {
     return typeof value === "string" ? value : JSON.stringify(value);
   }
@@ -1036,6 +1047,7 @@
       expireTime: parsed.expiryHours ? new Date(Date.now() + Number(parsed.expiryHours) * 3600000).toISOString() : null,
       orderId: null,
       security: null, // Plan B verdict: { loading } | { action, reasons, sources } | { error } | { native }
+      integrity: initialPlan && initialPlan.integrity || null,
       copyMode: "native",
       maxDrift: "3",
     };
@@ -1136,12 +1148,15 @@
       const strategyCard = $(".strategy-card");
       const steps = (compiledStrategy.steps || []).map((step, index) => `${index ? '<span class="strategy-arrow">→</span>' : ''}<span class="strategy-step">${escapeHtml(step.label || step.orderType)}</span>`).join("");
       const warning = (compiledStrategy.warnings || [])[0];
+      const integrity = initialPlan.integrity;
+      const passport = initialPlan.passport;
+      const recommendation = initialPlan.recommendation;
       const decay = strategyRoom && strategyRoom.decay;
       const room = strategyRoom && strategyRoom.room;
       const roomLine = initialPlan.verified
         ? `<div class="strategy-room">${decay ? `<span class="decay ${escapeHtml(decay.state)}" title="${escapeHtml(decay.reason || "")}">${escapeHtml(decay.label)}</span>` : '<span class="decay">Checking freshness</span>'}${room ? `<span>${Number(room.followers) || 0} following · ${Number(room.active) || 0} active</span>` : ""}<button class="strategy-follow" data-follow-strategy>${strategyRoom && strategyRoom.subscribed ? "Alerts on" : "Follow alerts"}</button></div>`
         : "";
-      strategyCard.innerHTML = `<span class="strategy-kicker">${initialPlan.verified ? "VERIFIED FOLLOWABLE STRATEGY" : "FLASH STRATEGY COMPILER"}</span><span class="strategy-title">${escapeHtml(compiledStrategy.title || "Compiled strategy")}</span><span class="strategy-summary">${escapeHtml(compiledStrategy.summary || "")}</span><div class="strategy-steps">${steps}</div>${warning ? `<span class="strategy-warning">${escapeHtml(warning)}</span>` : ""}${roomLine}`;
+      strategyCard.innerHTML = `<span class="strategy-kicker">${initialPlan.verified ? "VERIFIED FOLLOWABLE STRATEGY" : "FLASH STRATEGY COMPILER"}</span><span class="strategy-title">${escapeHtml(compiledStrategy.title || "Compiled strategy")}</span><span class="strategy-summary">${escapeHtml(compiledStrategy.summary || "")}</span><div class="strategy-steps">${steps}</div>${recommendation ? `<span class="strategy-summary"><b>${escapeHtml(recommendation.title)}:</b> ${escapeHtml(recommendation.rationale)}</span>` : ""}${integrity ? `<span class="strategy-${integrity.action === "block" ? "warning" : "summary"}"><b>${integrity.action === "block" ? "Contract mismatch:" : "Contract integrity:"}</b> ${escapeHtml(integrity.message)}</span>` : ""}${passport ? `<span class="strategy-summary">Signal Passport · captured ${new Date(passport.capturedAt).toLocaleString()} · valid until ${new Date(passport.terms.expiresAt).toLocaleString()}</span>` : ""}${warning ? `<span class="strategy-warning">${escapeHtml(warning)}</span>` : ""}${roomLine}`;
       strategyCard.hidden = false;
     }
     if (compiledStrategy) {
@@ -1489,6 +1504,9 @@
         cta.disabled = true;
       } else if (buyBlocked()) {
         cta.textContent = `${mainToken()} flagged as unsafe`;
+        cta.disabled = true;
+      } else if (state.integrity && state.integrity.action === "block") {
+        cta.textContent = "Contract mismatch — trade blocked";
         cta.disabled = true;
       } else if (!activeAccount) {
         cta.textContent = initialPlan && initialPlan.verified ? "Connect wallet to follow" : "Connect wallet";
@@ -2351,6 +2369,26 @@
       button.lastElementChild.textContent = "Parsing signal…";
       try {
         const result = await parsePlanApi(text);
+        if (result.verified && result.signalId) {
+          try {
+            const attached = await signalApi(`/signals/${encodeURIComponent(result.signalId)}/source`, {
+              context: { tweetId: tweetId(article), authorHandle: tweetAuthor(article), text },
+            }, "POST");
+            result.passport = attached.passport || result.passport;
+          } catch { /* A source link is evidence metadata, never a trade prerequisite. */ }
+        }
+        if (!result.verified) {
+          // Evidence capture is best-effort; a temporary ledger outage never
+          // prevents a user from reviewing a validated Flash strategy.
+          try {
+            const captured = await signalApi("/signals/capture", {
+              plan: result.draft,
+              context: { tweetId: tweetId(article), authorHandle: tweetAuthor(article), text },
+            }, "POST");
+            result.signalId = captured.signal && captured.signal.id;
+            result.passport = captured.passport || captured.signal && captured.signal.passport;
+          } catch { /* Trade review remains available without persistence. */ }
+        }
         await discoverTicker(result.asset.symbol);
         createParsedPlanCard(article, result);
         button.lastElementChild.textContent = "Ready to review";
