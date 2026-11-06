@@ -1,78 +1,222 @@
 # Plan B
 
-Plan B is a Chrome extension that turns trading signals on X into editable, non-custodial order plans. Click **Make plan** on a tweet, review the Groq-generated draft, choose the size yourself, and sign a Definitive Flash entry plus optional stop/target protection from your wallet.
+**Plan B turns a trading signal on X into an editable, non-custodial Definitive Flash advanced-order plan.** It is a Chrome extension, a small Node backend, and a social trading surface—not an auto-trader and not a wallet custodian.
 
-## What is implemented
+The product principle is simple: social posts may suggest a strategy, but only the follower chooses size, reviews the exact asset and protections, and signs from their own wallet.
 
-- **Any-tweet parsing:** `POST /parse` sends untrusted tweet text to Groq using a strict JSON schema. The model can suggest only token, chain, side, entry type/price, stop, target, duration, confidence and ambiguity fields. It never chooses size or authorizes a trade.
-- **Independent validation:** backend code resolves the asset through Flash `/search`, validates chain availability, compares prices with Flash's current price, checks stop/target direction, and rejects low-confidence or unclear posts.
-- **Simple plan panel:** the normal view asks “How do I get in?” (market, limit, TWAP) and “How do I get out?” (stop + target or none). The original Flash order controls remain under **Advanced**.
-- **Followable Flash strategies:** verified Caller Cards compile a social signal into its exact Flash recipe—market, limit, TWAP, triggered entry or trailing protection. Followers keep their own wallet and size while signing the same execution logic. Atomic attached brackets protect same-chain market, limit and TWAP entries from their first fill.
-- **Signal Passport and caller accountability:** every parsed post or signed Caller Card can preserve a text hash, asset contract, Flash detection price, strategy terms, expiry, source availability checks and an expiry outcome. Only wallet-signed Caller Cards contribute to a caller’s public performance record; unsigned observed posts stay visibly separate.
-- **Attested sources and revisions:** a Caller Card can only attach to an observed post containing its `planb:<id>` reference. Public availability is tracked separately from browser observation, a bounded background worker rechecks public sources every 15 minutes by default, and a caller can publish append-only, independently signed strategy revisions without rewriting the original Passport.
-- **Flash execution receipts:** each submitted plan can retain its Flash quote ID, detection time, estimated price impact and fee context. The dashboard exposes quote quality and wallet-signed limit and bracket-protection revisions using Flash’s order update flow.
-- **Contract integrity:** an explicit contract is resolved through Flash exactly as written. Plan B blocks a ticker/contract mismatch instead of silently substituting a same-symbol asset. Ticker-only posts are labelled as symbol-resolved, and assets Flash cannot trade remain informational.
-- **Radar terminal:** `plan-b-landing-page/radar.html` is a read-only feed of signed Caller Cards with freshness (fresh / near entry / chasing / waiting / expired), advanced-order filters, follower counts, signal swarms, Flash-native execution recommendations and caller Passport records.
-- **Advanced-order recommendations:** the order compiler recommends the appropriate Flash structure—protected market entry, resting limit, TWAP scale-in, breakout stop, or position protection—without authorizing execution or overriding the user’s review.
-- **Flash execution:** market, limit, TWAP/DCA, stop, stop-loss, take-profit, bracket, trailing-stop and trailing-stop-limit orders, including attached brackets and their second wallet signature.
-- **Live asset coverage:** tokens are discovered from Flash at runtime across Ethereum, Base, Arbitrum, Optimism, Avalanche, BNB Chain, Polygon, HyperEVM, Ink, Monad, Plasma, Robinhood Chain, Arc and Solana.
-- **Wallet-native signing:** EIP-712 and EIP-191 on EVM; Ed25519 and transaction signing on Solana. Service keys stay in the backend.
-- **Social execution proof:** submitted plans are mapped to their tweet and author. A backend Flash Orders WebSocket updates plan state and card statistics for followers, target hits and stopped-out plans.
-- **Order dashboard:** open, resolved and cancelled plans are visible inside X. Cancellation uses the canonical Flash cancel message and wallet signature; attached protection can be cancelled with the entry.
-- **Local caller alerts:** Chrome checks followed Caller Cards every minute while the browser is running, shows native notifications only for newly published validated strategies, and opens the exact source when an alert is clicked. No X API or push provider is required.
-- **Share receipts:** resolved plans expose a pre-filled “Share receipt on X” action.
-- **Caller Cards:** `plan-b-landing-page/caller.html` lets a caller validate and sign a structured plan. The generated tweet contains a `planb:<id>` reference that the extension recognizes as verified.
-- **Pre-trade security gate:** Plan B combines Flash risk data, GoPlus token analysis and Honeypot sell simulation where supported. Critical findings hard-block buys; warnings require explicit acknowledgement.
-- **Resilient discovery:** Flash `/search` remains primary. If an integrator key is temporarily ineligible for search, DEX Screener resolves the contract and decimals for drafting; Flash still validates the real quote before any wallet signature.
+## Why Plan B exists
 
-## Architecture
+Most social trading products reduce a post to a market-buy button or ask users to trust an opaque “signal score.” Plan B instead makes the **trade structure** the product:
+
+- A caller says “buy ETH on a pullback, stop at X, target Y.” Plan B produces a Flash **limit + attached bracket**, rather than a market order that chases the price.
+- A caller gives a breakout level. Plan B proposes a Flash **stop entry**, waiting for confirmation.
+- The market has already moved. Plan B recommends a **TWAP + bracket** rather than pretending that the original entry is still available.
+- A caller discusses an existing position. Plan B identifies it as **protection**, not a new buy.
+
+That is what makes Plan B Flash-native: it uses advanced orders as the execution language of a social signal, instead of treating Flash as a swap API behind a generic trading UI.
+
+## What is built
+
+### 1. X post → validated draft
+
+The Chrome extension adds a Plan B action only when a post is either:
+
+- a signed `planb:<id>` Caller Card; or
+- a clear trade candidate with a token/contract reference and trading intent.
+
+Ordinary posts do not receive a trade button. Contextual posts which mention a token but do not contain enough executable detail open a clearly labelled **manual trade** panel instead of fabricating an order.
+
+`POST /parse` sends untrusted post text—or a user-supplied voice transcript—to Groq with a strict JSON schema. Groq may extract only:
 
 ```text
-X tweet
-  └─ Make plan
-      └─ extension/background.js
-          └─ POST /parse
-              ├─ Groq strict structured output
-              └─ Definitive Flash asset validation
-
-Reviewed plan
-  └─ wallet setup + order signatures
-      └─ Definitive Flash quote/order APIs
-          └─ Flash Orders WebSocket
-              └─ backend plan log → social proof + order dashboard
+token, chain, buy/sell, strategy type, entry type and price,
+trigger, stop loss, take profit, trailing settings, duration,
+expiry, confidence, missing facts, and ambiguous facts
 ```
 
-The backend stores order and social context, not private keys. The extension never receives `GROQ_API_KEY`, `DEFINITIVE_FLASH_API_KEY`, or an optional `GOPLUS_ACCESS_TOKEN`.
+The model never supplies a wallet, position size, or permission to trade. The backend treats all text as data, not instructions, and independently validates the draft before it reaches the signing flow.
 
-### Signal Passport data model
+### 2. Asset identity and validation
 
-Passport records capture the signal as seen, not a promise of trade performance:
+Plan B resolves a draft through Definitive Flash asset discovery and validates:
 
-- Tweet ID/source URL (once a Caller Card is posted), author handle and SHA-256 text hash
-- Exact Flash asset address, chain, detection price and contract-integrity verdict
-- Side, order type, stated entry/stop/target, and an explicit validity window
-- A one-time Flash mark-price direction result after expiry (`price_in_favor` or `price_against`)
-- Source availability history. A post is marked `removed` only after two consecutive public `404` checks; temporary lookup failures are `unavailable`, not evidence of deletion.
+- chain support and exact token address;
+- contract-versus-ticker integrity;
+- current Flash price sanity versus stated levels;
+- side-aware stop/target direction;
+- required facts for the chosen order type;
+- low confidence, missing facts, and ambiguous language.
 
-The current hackathon build persists Passports in local JSON files under `backend/data/` (ignored by Git). This is useful for a local demo but is **not** a tamper-proof or multi-user production ledger. A production deployment needs authenticated storage and a durable price/outcome source.
+An explicit contract address is never silently replaced with a same-symbol token. A ticker-only signal is visibly labelled `symbol_resolved`; an untradeable or mismatched contract is informational or blocked, never substituted.
 
-## Local setup
+Flash `/search` is the primary discovery source. If an API key is temporarily ineligible for search, DEX Screener can provide metadata only to keep the drafting experience usable; **Flash remains the quote and execution authority before signing**.
+
+### 3. Flash advanced orders at the core
+
+Plan B compiles a reviewed social draft into the correct Flash order recipe. The supported Flash order paths are:
+
+| Signal situation | Plan B recommendation | Flash execution shape |
+| --- | --- | --- |
+| Immediate entry with stop and target | Protected entry | Market + attached bracket |
+| “Buy the pullback at …” | Wait for the pullback | Limit + attached bracket |
+| “Scale in over two hours” | Avoid one-shot execution | TWAP/DCA + attached bracket |
+| “Buy only if it breaks …” | Confirm breakout | Stop entry |
+| Existing tokens need downside protection | Protect position | Stop-loss, take-profit, bracket, or trailing stop |
+| Price has moved materially from entry | Avoid chasing | TWAP recommendation with stated protection |
+
+The advanced order compiler supports:
+
+- market, limit, TWAP/DCA, and stop entries;
+- stop-loss, take-profit, bracket, trailing-stop, and trailing-stop-limit protection;
+- atomically attached brackets for same-chain market, limit, and TWAP entries;
+- explicit follow-up protection when Flash cannot attach a bracket atomically;
+- wallet-signed limit updates and wallet-signed bracket stop/target updates;
+- canonical wallet-signed cancellation of open orders.
+
+Flash handles routing and managed execution. Plan B obtains a quote, presents its terms, requests the required wallet signatures, submits the order to Flash, and tracks its lifecycle. On EVM this includes typed-data/personal-message and transaction signing paths; Solana uses the relevant message and transaction/delegation paths.
+
+### 4. Non-custodial controls and safety
+
+Plan B does not receive a user’s private key, choose their size, or submit a trade without their wallet confirmation.
+
+Before a buy, the extension calls a backend security gate that combines:
+
+- Flash asset/risk and liquidity information;
+- GoPlus token-security analysis;
+- Honeypot sell simulation on supported EVM networks.
+
+Confirmed critical findings block the trade. Non-critical concerns are presented as warnings that require the user to acknowledge them. Canonical wrapped native assets are handled specially so a zero direct WETH-style row is not falsely treated as zero native-token liquidity.
+
+Important execution notices are kept visible: first approvals may cost gas; gaps can cause protection to trigger immediately; and bought assets must remain in the signing wallet while attached protection is active.
+
+### 5. Caller Cards and Signal Passports
+
+A caller can create a structured strategy from [Caller Card](plan-b-landing-page/caller.html), sign a canonical message with their wallet, and publish the supplied X text containing `planb:<id>`.
+
+Each saved signal has a **Signal Passport**. It can preserve:
+
+- source post ID, URL, author handle, and SHA-256 text hash;
+- exact asset contract, chain, contract-integrity verdict, and captured Flash price;
+- side, entry, stop, target, order type, and validity window;
+- source availability checks and source-verification state;
+- a one-time post-expiry Flash mark-price direction result;
+- append-only caller-signed revisions.
+
+Source attestation requires the observed post to contain the exact `planb:<id>` reference. Plan B checks it immediately through X’s public embed endpoint and a bounded backend monitor rechecks attested sources every 15 minutes by default. It distinguishes:
+
+```text
+browser_observed · public_verified · public_available_unverified
+unavailable · removed
+```
+
+“Removed” requires two consecutive public `404` checks. A temporary network/API failure is only `unavailable`.
+
+Caller revisions do not rewrite history: the original Passport remains immutable, while each revised plan and reason receives a separately signed record.
+
+### 6. Social trading without fake trust scores
+
+Plan B separates evidence that should not be blended into one opaque number:
+
+- caller wallet signature / verified Caller Card;
+- historical signed-call mark-price outcomes;
+- follower Flash execution outcomes;
+- token contract integrity;
+- token security risk;
+- public source availability.
+
+Only signed Caller Cards count toward a caller record. Parsed public posts are retained as **observed signals**, clearly labelled manual review, and never improve a caller’s reputation.
+
+Caller profiles report `unscored`, `emerging`, or `established`. A caller needs at least five expiry-scored signed signals before a hit rate is presented as established. Chain and order-type history stay visible rather than becoming a synthetic “trust score.”
+
+### 7. Radar, copy workflow, and notifications
+
+The [Radar terminal](plan-b-landing-page/radar.html) provides separate feeds for signed Caller Cards and observed signals. It supports:
+
+- freshness states: fresh, near entry, waiting, chasing, aging, and expired;
+- filters for advanced order types;
+- caller watchlists and followed-caller feeds;
+- independent verified-caller swarms, such as multiple callers converging on the same asset;
+- caller records, Passport visibility, strategy revisions, and Flash execution recommendations;
+- follower counts and active / target-hit / stopped-out order data.
+
+When a user follows a Caller Card from the extension, Chrome stores the wallet locally and polls the local backend once per minute. It sends native notifications only for new validated followed signals or new swarms—existing signals are seeded silently to avoid alert spam. Clicking an alert opens the exact source post (or Radar for a swarm). This works without X API credentials or an external push provider.
+
+### 8. Execution receipts and order lifecycle
+
+After a user signs and submits a Flash order, Plan B stores a local plan record linked to the source signal and caller. It can retain:
+
+- Flash order ID and attached bracket order ID;
+- quote ID, quote time, estimated price impact, and estimated fees;
+- fill price, fill fee, transaction ID, and updated order state.
+
+The backend subscribes to Flash’s Orders WebSocket and maps order updates into local states such as waiting, entry filled, hit target, stopped out, cancelled, and failed. The in-X order drawer exposes open, resolved, and cancelled plans, cancellation controls, supported revisions, and shareable outcome text.
+
+## System architecture
+
+```text
+                 ┌──────────────────────────────────────────┐
+                 │                  X post                  │
+                 └────────────────────┬─────────────────────┘
+                                      │
+                         Candidate / Caller Card gate
+                                      │
+                 ┌────────────────────▼─────────────────────┐
+                 │             Plan B extension             │
+                 │ parse button · panel · wallet · alerts   │
+                 └────────────────────┬─────────────────────┘
+                                      │ localhost API
+┌─────────────────────────────────────▼──────────────────────────────────────┐
+│                              Plan B backend                                 │
+│ Groq structured parse → server validation → contract/safety → strategy      │
+│ Passport + Radar + plan log + public-source monitor + Flash stream          │
+└───────────────┬───────────────────────────────┬─────────────────────────────┘
+                │                               │
+         Definitive Flash                  Safety providers
+    search · quote · order · updates       GoPlus · Honeypot
+    cancel · balances · Orders WebSocket
+                │
+        Wallet-signed, non-custodial execution
+```
+
+## Definitive Flash integration
+
+Plan B uses Flash as the execution and advanced-order engine—not merely for pricing.
+
+| Flash capability | How Plan B uses it |
+| --- | --- |
+| Asset search | Resolve candidates and validate exact contracts/chains |
+| Quote | Show executable pricing, route/fee context, setup requirements, and bracket terms before signing |
+| Order | Submit wallet-signed market, limit, TWAP, stop, protection, and bracket instructions |
+| Order update | Revise an open limit order or attached bracket levels with a fresh wallet signature |
+| Order cancel | Submit canonical wallet-signed cancellation requests |
+| Balances | Populate selectable pay assets and wallet context |
+| Orders WebSocket | Keep local plan lifecycle, social proof, and receipts current |
+
+Supported Flash network availability is determined at runtime by Flash. The implementation is designed around the Flash catalog across EVM networks and Solana, including Ethereum, Base, Arbitrum, Optimism, Avalanche, BNB Chain, Polygon, HyperEVM, Ink, Monad, Plasma, Robinhood Chain, Arc, and Solana where Flash returns the asset/order route.
+
+Reference material used by the integration is stored locally in [docs/definitive-flash](docs/definitive-flash/), including the LLM-oriented documentation index and OpenAPI specification.
+
+## Local setup and demo
 
 ### Requirements
 
 - Node.js 18+
-- Chrome or another Chromium browser
-- An injected EVM wallet such as MetaMask or Rabby and/or a Solana wallet such as Phantom
+- Chrome/Chromium
+- An injected EVM wallet such as MetaMask/Rabby and/or a Solana wallet such as Phantom
+- A Definitive Flash API key
+- A Groq API key
 
 ### Backend
 
-Create `backend/.env` from `backend/.env.example` and set:
+Create `backend/.env` from [backend/.env.example](backend/.env.example):
 
 ```env
 DEFINITIVE_FLASH_API_KEY=
 GROQ_API_KEY=
 GROQ_MODEL=openai/gpt-oss-20b
-GOPLUS_ACCESS_TOKEN=       # optional; public checks work without it
+GOPLUS_ACCESS_TOKEN=              # optional
+SOURCE_MONITOR_INTERVAL_MS=900000 # optional; defaults to 15 min
+EXTENSION_ID=                     # optional local CORS restriction
 ```
 
 Then run:
@@ -83,7 +227,7 @@ npm install
 node server.js
 ```
 
-The API listens on `http://localhost:8000` by default. Set `EXTENSION_ID` after Chrome assigns a stable unpacked-extension ID to restrict CORS to that extension.
+The backend listens on `http://localhost:8000`.
 
 ### Extension
 
@@ -93,36 +237,86 @@ npm install
 npm run build:solana
 ```
 
-Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the `extension` directory. Reload the extension and refresh X after code changes. Chrome Web Store submission is not required for local or hackathon use.
+1. Open `chrome://extensions`.
+2. Enable **Developer mode**.
+3. Select **Load unpacked** and choose the `extension` directory.
+4. Reload the extension and refresh X after any extension change.
 
-### Landing page and Caller Card
+Chrome Web Store submission is not required for a local or hackathon demo.
+
+### Landing pages
 
 ```bash
 cd plan-b-landing-page
 python3 -m http.server 4173
 ```
 
-Open `http://localhost:4173`. The Caller Card uses the backend at `http://localhost:8000`.
+Open:
 
-## Important behavior
+- `http://127.0.0.1:4173/` — product landing page
+- `http://127.0.0.1:4173/caller.html` — create and sign a Caller Card
+- `http://127.0.0.1:4173/radar.html` — social signal Radar
+- `http://127.0.0.1:4173/leaderboard.html` — follower-outcome leaderboard
 
-- Tweet text is untrusted data and cannot change the parser instructions.
-- Position size is always entered by the user.
-- No order is signed or submitted until the user clicks and approves the wallet request.
-- First-time token approval can cost gas.
-- Bought tokens must remain in the signing wallet while attached protection is active.
-- Cancelling an entry does not automatically cancel its activated bracket, so the dashboard exposes both cancellations.
+## API map
 
-## Main files
+| Route | Purpose |
+| --- | --- |
+| `POST /parse` | Groq parse plus server-side Flash validation of a post or voice instruction |
+| `GET /flash/search`; `POST /flash/quote`, `/flash/order` | Safe backend proxy for relevant Flash actions |
+| `POST /flash/update-order` / `/cancel-order` | Wallet-signed Flash order maintenance |
+| `POST /plans` / `GET /plans` | Create and read local Flash plan records |
+| `POST /signals` | Create a wallet-signed Caller Card |
+| `POST /signals/:id/source` | Attach and attest a published Caller Card source |
+| `POST /signals/:id/revisions/*` | Create append-only caller-signed revisions |
+| `POST /signals/capture` | Keep unsigned observed signals separate from caller reputation |
+| `GET /signals/:id/passport` | Read a Passport; optionally refresh public availability |
+| `GET /creators/:creator` | Read caller methodology-gated history |
+| `POST /subscriptions` / `GET /radar` | Follow callers and fetch wallet-scoped Radar alerts |
+| `GET /terminal?scope=verified|observed` | Public signed/observed Radar feeds |
+| `GET /security/token/:chain/:address` | Run the multi-source pre-trade security gate |
 
-| Area | Files |
-|---|---|
-| Groq parsing and Flash validation | `backend/parser.js` |
-| Plan log and social outcomes | `backend/plans.js`, `backend/flash-stream.js` |
-| Verified Caller Cards | `backend/signals.js`, `plan-b-landing-page/caller.html` |
-| Signal Passport, caller records and Radar | `backend/signals.js`, `backend/radar.js`, `plan-b-landing-page/radar.html`, `plan-b-landing-page/creator.html` |
-| Backend routes and safety limits | `backend/server.js`, `backend/flash.js` |
-| Tweet UI, execution and dashboard | `extension/x-ticker-swap.js` |
-| Extension network proxy | `extension/background.js` |
-| Wallet bridge | `extension/bridge.js` |
-| Offline Flash specification | `docs/definitive-flash/openapi.json` |
+## Safety and scope boundaries
+
+- No trade is automatically signed or executed.
+- Position size is always provided by the user; it is never parsed from a post.
+- A social post is untrusted input, not financial advice.
+- “Price in favor” on a Passport is a post-expiry mark-price measurement, **not** proof that a caller’s target filled.
+- Actual follower target/stop outcomes come from Flash order events.
+- A source check can establish public availability evidence; without X OAuth/API it is not a full proof of X-account ownership.
+- Local JSON files under `backend/data/` are hackathon/demo storage, not a production ledger or multi-user database.
+- The local notification loop can alert on signals already known to Plan B. Fully automatic discovery of arbitrary KOL posts requires X API access and remains outside the current local build.
+
+## Current production follow-ups
+
+- Replace local JSON stores with authenticated, durable database storage.
+- Add X OAuth/API identity linking and proactive KOL post discovery.
+- Deploy the backend with durable scheduled jobs and production web push subscriptions.
+- Add end-to-end wallet/extension tests and a recorded onchain Flash advanced-order demo.
+- Add explicit integrator-fee configuration if Plan B is monetized through Flash.
+
+## Repository guide
+
+| Area | Key files |
+| --- | --- |
+| Server, validation, and Flash proxy | `backend/server.js`, `backend/parser.js`, `backend/flash.js` |
+| Advanced-order compiler | `backend/strategy.js` |
+| Safety checks | `backend/security.js` |
+| Plans, receipts, and Flash order stream | `backend/plans.js`, `backend/flash-stream.js` |
+| Caller Cards, Passports, source monitor | `backend/signals.js` |
+| Radar, subscriptions, and swarms | `backend/radar.js` |
+| X UI, wallet interaction, in-X dashboard | `extension/x-ticker-swap.js`, `extension/bridge.js` |
+| Background notifications and backend messaging | `extension/background.js` |
+| Landing, Caller, Radar, creator and leaderboard pages | `plan-b-landing-page/` |
+| Flash docs snapshot | `docs/definitive-flash/` |
+
+## Verification
+
+```bash
+npm --prefix backend test
+node --check backend/server.js
+node --check extension/background.js
+node --check extension/x-ticker-swap.js
+```
+
+The backend test suite covers parser safety/fallback behavior, security gates, native-liquidity handling, advanced-order compilation, Radar freshness/swarms, and Caller Card revision message binding.
