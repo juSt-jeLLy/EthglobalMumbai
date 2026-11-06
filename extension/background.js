@@ -3,6 +3,45 @@ const BACKEND_URL = "http://localhost:8000";
 
 // Fetches run here (with host_permissions) to avoid the host page's CORS and CSP restrictions.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === "parsePlan") {
+    fetch(`${BACKEND_URL}/parse`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: String(message.text || "").slice(0, 4000) }),
+    })
+      .then(async (response) => {
+        const text = await response.text();
+        let body;
+        try { body = JSON.parse(text); } catch { body = { message: text }; }
+        sendResponse({ ok: response.ok, status: response.status, body });
+      })
+      .catch((error) => sendResponse({ ok: false, status: 0, body: { message: `Plan B backend not reachable at ${BACKEND_URL} (${error.message})` } }));
+    return true;
+  }
+
+  if (message.action === "plans") {
+    const op = message.op || "list";
+    let url = `${BACKEND_URL}/plans`;
+    let method = "GET";
+    let body;
+    if (op === "create") { method = "POST"; body = message.body || {}; }
+    else if (op === "social") url = `${BACKEND_URL}/social?${new URLSearchParams(message.body || {})}`;
+    else url = `${BACKEND_URL}/plans?${new URLSearchParams(message.body || {})}`;
+    fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      ...(body && { body: JSON.stringify(body) }),
+    })
+      .then(async (response) => {
+        const text = await response.text();
+        let parsed;
+        try { parsed = JSON.parse(text); } catch { parsed = { message: text }; }
+        sendResponse({ ok: response.ok, status: response.status, body: parsed });
+      })
+      .catch((error) => sendResponse({ ok: false, status: 0, body: { message: `Plan B backend not reachable at ${BACKEND_URL} (${error.message})` } }));
+    return true;
+  }
+
   if (message.action === "flash") {
     const method = message.method || "POST";
     const query = method === "GET" ? `?${new URLSearchParams(message.body || {})}` : "";
@@ -41,29 +80,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // Kickbacks registry. get: GET /kickbacks/:handle, rpContext: POST /kickbacks/rp-context, register: POST /kickbacks/register
-  if (message.action === "kickbacks") {
-    const request = message.op === "get"
-      ? fetch(`${BACKEND_URL}/kickbacks/${encodeURIComponent(message.handle)}`)
-      : fetch(`${BACKEND_URL}/kickbacks/${message.op === "register" ? "register" : "rp-context"}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(message.body || {}),
-        });
-    request
-      .then(async (response) => {
-        const text = await response.text();
-        let body;
-        try { body = JSON.parse(text); } catch { body = { message: text }; }
-        sendResponse({ ok: response.ok, status: response.status, body });
-      })
-      .catch((error) => sendResponse({ ok: false, status: 0, body: { message: `Plan B backend not reachable at ${BACKEND_URL} (${error.message})` } }));
-    return true;
-  }
-
-  // Opens the World ID verification page (content scripts can't open extension pages themselves)
-  if (message.action === "openKickbacks") {
-    const params = new URLSearchParams({ handle: message.handle || "", wallet: message.wallet || "", avatar: message.avatar || "" });
-    chrome.tabs.create({ url: chrome.runtime.getURL(`kickbacks.html?${params}`), openerTabId: sender.tab && sender.tab.id });
-  }
 });

@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#080b09">
   <title>Plan B — Trade the signal</title>
-  <meta name="description" content="Plan B turns X ticker cards into non-custodial market and advanced orders powered by Definitive Flash.">
+  <meta name="description" content="Plan B turns any X trading signal into a validated, non-custodial plan powered by Groq and Definitive Flash.">
   <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -15,7 +15,7 @@
 
   <header class="nav shell">
     <a class="brand" href="#top" aria-label="Plan B home"><img src="assets/logo.svg" alt="" width="32" height="32"><span>PLAN B</span></a>
-    <nav class="nav-links" aria-label="Main navigation"><a href="#product">Product</a><a href="#orders">Orders</a><a href="#networks">Networks</a><a href="#faq">FAQ</a></nav>
+    <nav class="nav-links" aria-label="Main navigation"><a href="#product">Product</a><a href="#orders">Orders</a><a href="#networks">Networks</a><a href="leaderboard.html">Outcomes</a><a href="caller.html">Caller Card</a><a href="#faq">FAQ</a></nav>
     <a class="nav-github" href="https://github.com/juSt-jeLLy/EthglobalMumbai" target="_blank" rel="noopener">GitHub ↗</a>
     <a class="button button-small" href="#install" data-store-link>Get extension</a>
   </header>
@@ -25,19 +25,19 @@
       <div class="hero-copy">
         <div class="status-pill"><span></span> Flash execution is live</div>
         <h1>Trade the signal.<br><em>Not the noise.</em></h1>
-        <p class="hero-lede">Plan B turns token signals on X into a complete trading surface. Discover the asset, choose an execution strategy, and sign from your own wallet—without leaving the feed.</p>
+        <p class="hero-lede">Click “Make plan” on any trading tweet. Groq extracts a draft, Flash verifies the real token and chain, and you choose the size before anything reaches your wallet.</p>
         <div class="hero-actions">
           <a class="button" href="#install" data-store-link><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/><path d="M12 8.8h8.4M9.2 13.6 5 6.3M14.8 13.6 10.6 21"/></svg>Add to Chrome</a>
           <a class="text-link" href="#product">See how it works <span>↓</span></a>
         </div>
-        <div class="trust-row"><span>Non-custodial</span><span>Live token catalog</span><span>EVM + Solana</span></div>
+        <div class="trust-row"><span>LLM draft, code validated</span><span>Non-custodial</span><span>EVM + Solana</span></div>
       </div>
 
       <div class="terminal-wrap">
         <div class="terminal-glow"></div>
         <article class="x-card" aria-label="Plan B order panel preview">
           <div class="tweet-head"><img class="avatar" src="assets/0xfirehose.jpg" alt=""><div><b>Yagnesh</b><span>@yagneshh28 · 2m</span></div><span class="x-mark">𝕏</span></div>
-          <p class="tweet-copy">$AERO is holding the breakout. Scaling in over the next hour instead of chasing this candle.</p>
+          <p class="tweet-copy">Long $AERO on Base. Scale in over one hour around $0.58, stop $0.52, target $0.72.</p>
           <div class="ticker-card">
             <div class="ticker-top">
               <img src="assets/tokens/AERO.png" alt="" class="token-logo">
@@ -60,22 +60,22 @@
     </section>
 
     <section class="metrics shell" aria-label="Product metrics">
-      <div><strong>09</strong><span>advanced order modes</span></div><div><strong>14</strong><span>supported networks</span></div><div><strong>LIVE</strong><span>Flash token discovery</span></div><div><strong>0</strong><span>custodied keys</span></div>
+      <div><strong>ANY</strong><span>tweet can become a draft</span></div><div><strong>14</strong><span>supported networks</span></div><div><strong>LIVE</strong><span>execution outcomes</span></div><div><strong>0</strong><span>custodied keys</span></div>
     </section>
 
     <section id="product" class="section shell product-section">
       <div class="section-kicker">01 / PRODUCT</div>
-      <div class="section-heading"><h2>From a ticker card<br>to a signed order.</h2><p>Plan B compresses asset discovery, route selection, risk context, order configuration, and wallet signing into the place where the trade idea started.</p></div>
+      <div class="section-heading"><h2>From any tweet<br>to a validated plan.</h2><p>The model can only fill a draft. Plan B’s own code resolves the asset through Flash, validates prices and protection levels, and waits for you to choose the size.</p></div>
       <div class="flow-grid">
-        <article><span class="flow-num">01</span><div class="flow-icon">$</div><h3>See the signal</h3><p>Open any X ticker card. Plan B resolves the exact symbol across Flash’s live asset catalog and surfaces every available deployment.</p></article>
-        <article><span class="flow-num">02</span><div class="flow-icon">⌁</div><h3>Shape the order</h3><p>Choose the network, side, quote asset, size, and execution strategy—from an instant market order to TWAP, brackets, or trailing stops.</p></article>
-        <article><span class="flow-num">03</span><div class="flow-icon">✓</div><h3>Sign, never surrender</h3><p>Your wallet signs the setup and order payloads. The backend protects the Flash API key; it never receives your wallet key or holds funds.</p></article>
+        <article><span class="flow-num">01</span><div class="flow-icon">✦</div><h3>Make the plan</h3><p>Plan B sends only the tweet text to Groq and requests token, chain, side, entry, stop, target, and duration—never position size.</p></article>
+        <article><span class="flow-num">02</span><div class="flow-icon">⌁</div><h3>Validate and edit</h3><p>Flash resolves the real deployment and current price. You review the draft, choose market, limit or TWAP, set protection, and pick the size.</p></article>
+        <article><span class="flow-num">03</span><div class="flow-icon">✓</div><h3>Sign and follow</h3><p>Your wallet signs the entry and attached bracket. Live Flash order states power receipts and the tweet’s follower outcomes.</p></article>
       </div>
     </section>
 
     <section id="orders" class="section shell orders-section">
       <div class="section-kicker">02 / EXECUTION</div>
-      <div class="section-heading"><h2>One panel.<br>Every trading intent.</h2><p>Use the execution strategy the signal deserves. Plan B maps each configuration directly to Definitive Flash’s managed order infrastructure.</p></div>
+      <div class="section-heading"><h2>Simple first.<br>Advanced when needed.</h2><p>The default plan asks only how to get in and how to get out. Every raw Flash order type remains available under Advanced.</p></div>
       <div class="orders-board">
         <div class="order-list" role="list">
           <div class="selected"><b>Market</b><span>Execute now at the best available route</span><em>01</em></div><div><b>Limit</b><span>Rest until your price becomes available</span><em>02</em></div><div><b>TWAP / DCA</b><span>Split execution into timed buckets</span><em>03</em></div><div><b>Stop orders</b><span>Trigger above or below a target price</span><em>04</em></div><div><b>Take profit</b><span>Exit when the market reaches your target</span><em>05</em></div><div><b>Bracket</b><span>Pair take-profit and stop-loss exits</span><em>06</em></div><div><b>Trailing stop</b><span>Follow momentum with a moving trigger</span><em>07</em></div>
@@ -112,9 +112,9 @@
         <details open><summary>Does Plan B hold my funds?<span>+</span></summary><p>No. Plan B constructs the order and asks your wallet to sign it. Definitive Flash manages execution, while assets remain under your wallet’s control.</p></details>
         <details><summary>Which tokens are supported?<span>+</span></summary><p>Token support follows Flash’s live search catalog. When X renders a ticker card, Plan B resolves exact-symbol deployments and chooses the strongest-liquidity result per network.</p></details>
         <details><summary>Which wallets work?<span>+</span></summary><p>Injected EVM wallets such as MetaMask and Rabby are supported. Solana signing works with Phantom and compatible injected providers.</p></details>
-        <details><summary>Does it read every tweet yet?<span>+</span></summary><p>Not yet. This release attaches to X ticker cards. Parsing arbitrary tweet text into structured trade signals is the next product layer.</p></details>
+        <details><summary>Does it read ordinary tweets?<span>+</span></summary><p>Yes. “Make plan” is added to tweets with text. Groq produces a strict draft, then Plan B independently resolves and validates it with Flash. Junk or low-confidence posts are rejected.</p></details>
         <details><summary>Are these real mainnet orders?<span>+</span></summary><p>Yes. Review the asset, network, amount, execution strategy, quote, and wallet request carefully before signing.</p></details>
-        <details><summary>What does the backend store?<span>+</span></summary><p>The backend protects service credentials and proxies API requests. Wallet private keys never leave the wallet and are never sent to the backend.</p></details>
+        <details><summary>What does the backend store?<span>+</span></summary><p>It stores the Flash order ID, tweet and author references, token, plan type, timestamps, and lifecycle state used for social proof. Wallet private keys never leave the wallet.</p></details>
       </div>
     </section>
   </main>

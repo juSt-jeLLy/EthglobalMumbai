@@ -2,22 +2,64 @@
 const express = require('express')
 const cors = require('cors')
 const { flashProxyCtrl } = require('./flash.js')
+const { parsePlanCtrl } = require('./parser.js')
 const { interceptaTokenCtrl, interceptaTransactionCtrl } = require('./intercepta.js')
-const { getKickbackCtrl, rpContextCtrl, registerCtrl } = require('./kickbacks.js')
+const { createPlanCtrl, listPlansCtrl, socialProofCtrl, leaderboardCtrl, planEventsCtrl } = require('./plans.js')
+const { startFlashOrderStream } = require('./flash-stream.js')
+const { prepareSignalCtrl, createSignalCtrl, getSignalCtrl } = require('./signals.js')
 const app = express()
 const port = process.env.PORT || 8000
 
-app.use(cors())
-app.use(express.json())
+const allowedWebOrigins = new Set(['http://localhost:4173', 'http://127.0.0.1:4173'])
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedWebOrigins.has(origin)) return callback(null, true)
+    if (origin.startsWith('chrome-extension://')) {
+      const id = origin.slice('chrome-extension://'.length)
+      return callback(null, !process.env.EXTENSION_ID || id === process.env.EXTENSION_ID)
+    }
+    callback(Object.assign(new Error('Origin not allowed'), { status: 403, publicMessage: 'This origin is not allowed.' }))
+  },
+}))
+app.use(express.json({ limit: '64kb' }))
+
+const rateBuckets = new Map()
+app.use((req, res, next) => {
+  const now = Date.now()
+  const key = `${req.ip}:${req.path === '/parse' ? 'parse' : 'api'}`
+  const limit = req.path === '/parse' ? 20 : 180
+  const bucket = rateBuckets.get(key)
+  if (!bucket || now - bucket.startedAt >= 60000) rateBuckets.set(key, { startedAt: now, count: 1 })
+  else if (++bucket.count > limit) return res.status(429).json({ error: 'RateLimited', message: 'Too many requests. Try again shortly.' })
+  if (rateBuckets.size > 2000) for (const [bucketKey, value] of rateBuckets) if (now - value.startedAt > 120000) rateBuckets.delete(bucketKey)
+  next()
+})
 
 app.get('/', (req, res) => res.send('Plan B backend OK'))
+app.post('/parse', parsePlanCtrl)
+app.post('/plans', createPlanCtrl)
+app.get('/plans', listPlansCtrl)
+app.get('/plans/events', planEventsCtrl)
+app.get('/social', socialProofCtrl)
+app.get('/leaderboard', leaderboardCtrl)
+app.post('/signals/message', prepareSignalCtrl)
+app.post('/signals', createSignalCtrl)
+app.get('/signals/:id', getSignalCtrl)
 app.all('/flash/:endpoint', flashProxyCtrl)
 app.get('/intercepta/token/:chainId/:address', interceptaTokenCtrl)
 app.post('/intercepta/transaction/:chainId', interceptaTransactionCtrl)
-app.post('/kickbacks/rp-context', rpContextCtrl)
-app.post('/kickbacks/register', registerCtrl)
-app.get('/kickbacks/:handle', getKickbackCtrl)
+
+app.use((error, req, res, next) => {
+  if (res.headersSent) return next(error)
+  const status = Number.isInteger(error.status) ? error.status : 500
+  if (status >= 500) console.error('[server]', error.message)
+  res.status(status).json({
+    error: status === 403 ? 'OriginNotAllowed' : 'ServerError',
+    message: error.publicMessage || (status < 500 ? error.message : 'The request could not be completed.'),
+  })
+})
 
 app.listen(port, () => {
   console.log(`Plan B backend listening on port ${port}`)
+  startFlashOrderStream()
 })

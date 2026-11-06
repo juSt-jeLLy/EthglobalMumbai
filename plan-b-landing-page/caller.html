@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Caller Card — Plan B</title>
+  <meta name="description" content="Build and sign a verified Plan B caller card for X.">
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="caller-page">
+  <header class="site-nav shell"><a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="32" height="32"><span>PLAN B</span></a><a class="nav-cta" href="index.html">Back home</a></header>
+  <main class="caller-shell shell">
+    <section class="caller-copy"><span class="eyebrow">OPTIONAL / CALLER CARD</span><h1>Publish a plan people can verify.</h1><p>Choose the entry and protection levels, sign the plan with your wallet, then paste the generated text into X. The extension recognizes its Plan B ID and displays a verified badge.</p><div class="caller-note">The signature proves which wallet created the plan. It does not place an order or approve token spending.</div></section>
+    <form class="caller-form" id="caller-form">
+      <div class="field-grid"><label><span>Token</span><input name="token" placeholder="AERO" required></label><label><span>Chain</span><select name="chain"><option>base</option><option>ethereum</option><option>arbitrum</option><option>optimism</option><option>solana</option><option>avalanche</option><option>bsc</option><option>polygon</option></select></label></div>
+      <div class="field-grid"><label><span>Side</span><select name="side"><option value="buy">Buy</option><option value="sell">Sell</option></select></label><label><span>Entry type</span><select name="entryType" id="caller-entry"><option value="market">Market</option><option value="limit">Limit</option><option value="twap">TWAP</option></select></label></div>
+      <div class="field-grid"><label><span>Entry price</span><input name="entryPrice" inputmode="decimal" placeholder="Optional for market"></label><label><span>TWAP duration (hours)</span><input name="durationHours" inputmode="decimal" placeholder="Only for TWAP"></label></div>
+      <div class="field-grid"><label><span>Stop loss</span><input name="stopLoss" inputmode="decimal" placeholder="Optional"></label><label><span>Take profit</span><input name="takeProfit" inputmode="decimal" placeholder="Optional"></label></div>
+      <button class="button caller-submit" type="submit">Validate and sign plan</button><p class="caller-status" id="caller-status"></p>
+      <section class="caller-result" id="caller-result" hidden><span>Verified tweet text</span><textarea id="caller-tweet" readonly></textarea><div><button class="button" id="copy-tweet" type="button">Copy tweet text</button><a class="text-link" id="open-x" target="_blank" rel="noopener">Open in X ↗</a></div></section>
+    </form>
+  </main>
+  <script src="caller.js"></script>
+</body>
+</html>

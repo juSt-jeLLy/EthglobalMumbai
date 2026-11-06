@@ -395,6 +395,31 @@
     });
   }
 
+  function parsePlanApi(text) {
+    if (!inExtension) return Promise.reject(new Error("Tweet parsing needs the Plan B extension"));
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ action: "parsePlan", text }, (response) => {
+        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+        if (!response || !response.ok) {
+          const body = response && response.body || {};
+          return reject(Object.assign(new Error(body.message || `Plan parser error ${response && response.status || 0}`), { status: response && response.status, details: body.details }));
+        }
+        resolve(response.body);
+      });
+    });
+  }
+
+  function plansApi(op, body = {}) {
+    if (!inExtension) return Promise.reject(new Error("Plan tracking needs the Plan B extension"));
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ action: "plans", op, body }, (response) => {
+        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+        if (!response || !response.ok) return reject(new Error(response && response.body && response.body.message || `Plan API error ${response && response.status || 0}`));
+        resolve(response.body);
+      });
+    });
+  }
+
   function typedDataPayload(value) {
     return typeof value === "string" ? value : JSON.stringify(value);
   }
@@ -452,64 +477,12 @@
     return { reasons: detectorReasons(body.detectors), send: movement.send || [], receive: movement.receive || [] };
   }
 
-  // ---------------------------------------------------------------------------
-  // Creator registrations are retained for a future Flash fee-distribution layer. Flash
-  // integrator fees are configured at the integrator account level, not per-order recipient.
-  // ---------------------------------------------------------------------------
-  const KICKBACK_TTL_MS = 60 * 1000;
-  const kickbackCache = new Map(); // handle -> { expires, request: Promise of { handle, wallet, bips } or null }
-
-  function kickbacksApi(message) {
-    if (!inExtension) return Promise.reject(new Error("Kickbacks need the Plan B extension"));
-    return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ action: "kickbacks", ...message }, (response) => {
-        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-        if (!response.ok) {
-          const body = response.body || {};
-          return reject(Object.assign(new Error(body.message || body.error || `Kickbacks API error ${response.status}`), { status: response.status }));
-        }
-        resolve(response.body);
-      });
-    });
-  }
-
-  // -> { handle, wallet, bips } if the handle verified with World ID, else null
-  function kickbackFor(handle) {
-    const key = handle.toLowerCase();
-    const cached = kickbackCache.get(key);
-    if (cached && cached.expires > Date.now()) return cached.request;
-    const request = kickbacksApi({ op: "get", handle }).catch((error) => {
-      if (error.status === 404) return null;
-      kickbackCache.delete(key); // don't cache failures
-      throw error;
-    });
-    kickbackCache.set(key, { expires: Date.now() + KICKBACK_TTL_MS, request });
-    return request;
-  }
-
-  // The signed-in X account, from the sidebar's Profile link
-  function loggedInHandle() {
-    const link = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]');
-    const match = link && (link.getAttribute("href") || "").match(/^\/([A-Za-z0-9_]{1,15})$/);
-    return match ? match[1] : null;
-  }
-
   // The tweet's author (for a repost, the original author)
   function tweetAuthor(article) {
     const link = article.querySelector('[data-testid="User-Name"] a[href^="/"]');
     const match = link && (link.getAttribute("href") || "").match(/^\/([A-Za-z0-9_]{1,15})$/);
     return match ? match[1] : null;
   }
-
-  function sameHandle(a, b) {
-    return !!a && !!b && a.toLowerCase() === b.toLowerCase();
-  }
-
-  // Coming back from the World ID page: forget cached registrations so panels pick up the new one
-  window.addEventListener("focus", () => {
-    kickbackCache.clear();
-    document.querySelectorAll(`[${HOST_ATTR}]`).forEach((host) => host.dispatchEvent(new Event("plan-b:kickback")));
-  });
 
   // ---------------------------------------------------------------------------
   // Units and formatting
@@ -553,6 +526,10 @@
 
   function escapeHtml(text) {
     return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function utf8ToHex(text) {
+    return "0x" + [...new TextEncoder().encode(text)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   }
 
   // ---------------------------------------------------------------------------
@@ -798,6 +775,12 @@
     .order-config select:focus, .order-config input:focus { border-color: var(--accent); }
     .order-config .checkline { grid-column: 1 / -1; flex-direction: row; align-items: center; cursor: pointer; }
     .order-config .checkline input { width: 16px; height: 16px; padding: 0; }
+    .plan-title { grid-column: 1 / -1; font-size: 12px; font-weight: 700; letter-spacing: .04em; color: var(--text); }
+    .plan-warning { grid-column: 1 / -1; margin: 0; padding: 8px 10px; border-radius: 9px; background: var(--surface); color: var(--muted); font-size: 12px; line-height: 17px; }
+    .advanced { grid-column: 1 / -1; border-top: 1px solid var(--border); padding-top: 8px; }
+    .advanced summary { cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 700; }
+    .advanced-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding-top: 8px; }
+    .advanced-grid .wide { grid-column: 1 / -1; }
     @container (max-width: 380px) { .order-config { grid-template-columns: 1fr; } .order-config label.wide, .order-config .checkline { grid-column: 1; } }
     .box {
       min-width: 0;
@@ -888,28 +871,8 @@
     .security b { font-weight: 700; }
     .security.loading { animation: pulse 1s ease-in-out infinite; }
     .status .ic-mark { width: 9px; height: 12px; vertical-align: -1px; margin-right: 2px; }
-
-    /* Kickback to the tweet's author (World ID verified), or the author's invite to verify */
-    .kickback { display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 16px; color: var(--muted); }
-    .kickback .wid { width: 14px; height: 14px; fill: currentColor; flex: none; }
-    .kickback b { color: var(--text); font-weight: 700; }
-
-    /* On the author's own tweet, under the card whether the panel is open or not */
-    .owner {
-      display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px;
-      font-size: 13px; line-height: 16px; color: var(--muted);
-    }
-    .owner > .wid { width: 18px; height: 18px; fill: var(--text); flex: none; }
-    .owner .copy { flex: 1 1 180px; min-width: 0; }
-    .owner b { color: var(--text); font-weight: 700; }
-    .earn {
-      display: inline-flex; align-items: center; gap: 8px; flex: none; white-space: nowrap;
-      font: inherit; font-size: 14px; font-weight: 700; color: var(--bg); background: var(--text);
-      border: 0; border-radius: 9999px; height: 32px; padding: 0 14px 0 10px; cursor: pointer;
-      transition: opacity .15s;
-    }
-    .earn:hover { opacity: .9; }
-    .earn .wid { width: 18px; height: 18px; fill: currentColor; }
+    .social-proof { font-size: 12px; line-height: 16px; color: var(--muted); }
+    .social-proof b { color: var(--text); }
 
     /* Held transaction: Intercepta flagged it, the user decides */
     .risk { text-align: left; display: flex; flex-direction: column; gap: 6px; }
@@ -948,43 +911,46 @@
     [2.5, 10.5, 18.5, 26.5].flatMap((cy) => [2.5, 10.5, 18.5].map((cx) => `<circle cx="${cx}" cy="${cy}" r="2.5"/>`)).join("")
   }</svg>`;
   // World logo (from World's own favicon), inlined so it follows the theme color
-  const WORLD_ID_SVG = `<svg class="wid" viewBox="0 0 528 528" aria-hidden="true"><g transform="translate(0,528) scale(0.1,-0.1)"><path d="M2358 5195 c-1 -1 -30 -6 -63 -9 -139 -13 -302 -44 -420 -78 -78 -22 -229 -73 -260 -88 -11 -5 -42 -19 -70 -30 -71 -31 -198 -96 -280 -143 -82 -47 -228 -147 -233 -159 -2 -4 -8 -8 -13 -8 -5 0 -17 -8 -27 -17 -10 -10 -36 -31 -58 -48 -104 -80 -311 -293 -390 -400 -16 -22 -32 -42 -35 -45 -3 -3 -26 -34 -50 -70 -24 -36 -46 -67 -49 -70 -3 -3 -11 -16 -19 -30 -8 -14 -36 -63 -63 -109 -43 -74 -60 -109 -113 -226 -54 -118 -97 -244 -135 -392 -36 -140 -32 -121 -55 -273 -27 -170 -27 -581 0 -720 2 -10 7 -40 10 -67 7 -43 35 -177 49 -228 22 -81 30 -109 48 -160 58 -173 154 -379 242 -519 31 -48 56 -92 56 -96 0 -5 3 -10 8 -12 4 -1 29 -34 56 -72 27 -38 57 -77 65 -86 9 -9 32 -36 51 -60 83 -104 289 -298 412 -389 35 -25 65 -49 66 -53 2 -5 8 -8 12 -8 5 0 37 -19 72 -42 107 -72 202 -123 333 -180 50 -21 99 -43 110 -48 38 -17 167 -60 253 -84 91 -26 117 -32 192 -46 25 -5 61 -11 80 -15 39 -7 55 -10 150 -22 80 -10 453 -10 535 0 110 13 140 17 195 28 83 15 89 17 175 40 100 26 97 25 115 31 8 3 53 18 100 34 47 15 96 34 110 41 14 7 29 13 33 13 19 0 289 141 368 192 91 59 268 189 310 228 98 91 205 200 261 265 39 44 78 90 89 101 10 12 19 26 19 32 0 6 4 12 8 14 11 4 111 149 148 213 15 28 33 53 39 57 5 4 7 8 2 8 -4 0 3 17 16 37 24 39 107 210 107 221 0 4 6 19 14 34 21 39 74 199 102 308 35 133 51 219 70 375 24 201 15 484 -21 695 -3 19 -8 44 -9 55 -2 11 -9 43 -16 70 -6 28 -14 61 -16 74 -9 48 -93 290 -130 377 -45 106 -124 258 -170 332 -19 29 -34 55 -34 58 0 3 -13 22 -28 42 -16 20 -48 64 -72 97 -174 237 -441 486 -688 641 -115 72 -327 184 -347 184 -3 0 -24 9 -48 19 -91 41 -213 82 -312 107 -68 17 -147 34 -175 39 -19 3 -42 8 -50 10 -8 2 -37 7 -65 10 -27 4 -68 9 -90 12 -45 5 -471 13 -477 8z m422 -489 c84 -11 172 -24 200 -31 14 -3 37 -8 53 -11 22 -4 90 -24 202 -58 6 -2 19 -7 30 -11 11 -4 49 -19 85 -33 153 -59 362 -182 504 -296 67 -54 206 -181 206 -189 0 -2 -339 -4 -752 -4 -805 0 -845 -1 -1003 -38 -170 -39 -353 -120 -494 -218 -87 -62 -259 -228 -323 -312 -42 -56 -148 -227 -148 -239 0 -3 -11 -29 -24 -58 -34 -76 -62 -162 -81 -250 -17 -77 -17 -78 -49 -79 -27 0 -152 1 -181 2 -5 0 -48 0 -95 0 -148 -1 -206 -1 -222 0 -7 0 -40 0 -73 -1 -33 -1 -73 -2 -89 -1 l-29 1 7 53 c8 66 13 96 32 177 9 36 17 72 19 80 2 8 4 15 5 15 1 0 3 7 5 15 9 48 74 219 117 309 125 261 297 488 518 681 34 30 69 59 77 64 9 4 23 16 33 25 92 82 348 224 510 283 30 11 62 22 70 25 8 3 20 7 25 9 6 1 48 13 95 27 93 27 246 55 349 64 36 3 67 6 68 7 6 5 304 -2 353 -8z m1681 -1224 c81 -186 119 -313 145 -477 3 -22 9 -57 14 -78 5 -22 4 -39 -2 -43 -5 -3 -40 -5 -76 -4 -37 1 -73 1 -79 1 -96 -4 -284 -2 -292 3 -6 4 -11 4 -11 -1 0 -4 -21 -7 -47 -5 -27 1 -68 2 -93 2 -36 1 -279 0 -375 0 -11 0 -45 1 -75 1 -30 1 -61 1 -67 0 -74 -4 -284 -2 -292 3 -6 4 -11 4 -11 -1 0 -4 -21 -7 -47 -5 -53 2 -71 3 -293 2 -85 0 -162 0 -170 1 -16 0 -254 0 -282 -1 -35 0 -108 0 -120 1 -7 0 -51 0 -98 0 -126 -1 -201 -1 -222 0 -7 0 -63 -1 -124 -2 -62 -1 -116 1 -122 5 -19 11 51 185 112 276 79 118 188 222 311 297 85 53 235 106 330 119 28 3 52 8 54 10 2 2 427 4 945 4 l941 0 46 -108z m-3242 -1102 c5 -8 12 -33 16 -55 5 -22 9 -46 11 -52 9 -48 53 -164 93 -249 93 -195 228 -370 380 -492 25 -20 48 -40 51 -43 10 -13 149 -99 159 -99 6 0 11 -3 11 -8 0 -4 19 -16 43 -26 121 -54 196 -84 227 -92 42 -9 41 -9 60 -16 17 -7 104 -24 165 -34 22 -4 391 -8 820 -9 429 -2 787 -4 795 -5 21 -1 -126 -138 -244 -227 -457 -343 -1037 -482 -1606 -383 -79 14 -78 14 -200 44 -45 11 -186 60 -195 68 -5 4 -15 8 -22 8 -14 0 -259 117 -278 132 -5 5 -50 35 -100 68 -49 32 -100 68 -112 79 -12 12 -25 21 -28 21 -16 0 -240 220 -300 295 -22 28 -42 52 -46 55 -3 3 -21 28 -40 55 -18 28 -37 52 -40 55 -3 3 -26 39 -51 80 -63 105 -129 240 -163 330 -1 3 -7 18 -14 34 -22 53 -68 219 -85 306 -10 47 -21 102 -25 122 -5 20 -5 40 0 45 5 5 167 9 360 8 301 0 352 -2 358 -15z m3404 2 c-2 -6 -5 -31 -8 -54 -4 -43 -9 -69 -22 -123 -4 -16 -7 -34 -8 -40 -1 -5 -3 -12 -4 -15 -1 -3 -4 -16 -7 -30 -12 -71 -83 -267 -133 -370 l-32 -65 -932 1 c-513 1 -950 4 -972 7 -139 22 -274 72 -387 144 -138 89 -283 255 -347 398 -29 64 -60 152 -56 157 2 2 658 3 1457 3 1116 -1 1452 -3 1451 -13z"/></g></svg>`;
   const CLOSE_SVG = `<svg viewBox="0 0 24 24"><path d="M10.59 12L4.54 5.96l1.42-1.42L12 10.59l6.04-6.05 1.42 1.42L13.41 12l6.05 6.04-1.42 1.42L12 13.41l-6.04 6.05-1.42-1.42L10.59 12z"/></svg>`;
 
-  function createPanel(article, link, ticker) {
+  function createPanel(article, link, ticker, initialPlan = null) {
     const themeVars = readTheme(article, link, ticker);
     const host = document.createElement("div");
     host.setAttribute(HOST_ATTR, ticker.symbol);
     const root = host.attachShadow({ mode: "open" });
 
     const availableChains = chainsForTicker(ticker.symbol);
-    const initialChain = wallet.chainId && availableChains.includes(wallet.chainId)
+    const plannedChain = initialPlan && FLASH_TO_CHAIN[initialPlan.asset && initialPlan.asset.chain];
+    const initialChain = plannedChain !== undefined && availableChains.includes(plannedChain)
+      ? plannedChain
+      : wallet.chainId && availableChains.includes(wallet.chainId)
       ? wallet.chainId
       : availableChains.includes(DEFAULT_CHAIN) ? DEFAULT_CHAIN : availableChains[0];
+    const parsed = initialPlan && initialPlan.draft || {};
+    const parsedEntryType = ["market", "limit", "twap"].includes(parsed.entryType) ? parsed.entryType : "market";
     const state = {
-      open: false,
+      open: !!initialPlan,
       chainId: initialChain,
-      side: "buy",
+      side: parsed.side === "sell" ? "sell" : "buy",
       quoteToken: "USDC",
       amount: "",
       quote: null, // { amountOut, priceImpact, feeUSD, raw, estimated, error }
       quoting: false,
       balance: null,
       busy: false,
-      orderType: "market",
-      limitPrice: "",
+      orderType: parsedEntryType,
+      limitPrice: parsed.entryPrice ? String(parsed.entryPrice) : "",
       triggerPrice: "",
       triggerDirection: "upper",
-      durationSeconds: "1800",
+      durationSeconds: parsed.durationHours ? String(Math.max(300, Math.round(Number(parsed.durationHours) * 3600))) : "1800",
       bucketCount: "12",
       trailPercent: "5",
       activationPrice: "",
-      attachBracket: false,
-      stopPrice: "",
-      targetPrice: "",
+      attachBracket: !!(parsed.stopLoss && parsed.takeProfit),
+      stopPrice: parsed.stopLoss ? String(parsed.stopLoss) : "",
+      targetPrice: parsed.takeProfit ? String(parsed.takeProfit) : "",
       orderId: null,
       security: null, // Intercepta verdict on the card's token: { loading } | { action, reasons } | { error } | { native }
-      kickback: null, // the tweet author's registration: { handle, wallet, bips }, or null if they haven't verified
     };
     const author = tweetAuthor(article);
     let quoteSeq = 0;
@@ -1024,48 +990,47 @@
                 </div>
               </div>
               <div class="order-config">
-                <label class="wide"><span>Flash order type</span><select class="order-type">
-                  <option value="market">Market</option>
-                  <option value="limit">Limit</option>
-                  <option value="twap">TWAP</option>
-                  <option value="dca">DCA (scheduled TWAP)</option>
-                  <option value="stop">Stop</option>
-                  <option value="stop-loss">Stop loss</option>
-                  <option value="take-profit">Take profit</option>
-                  <option value="bracket">Bracket (position exit)</option>
-                  <option value="trailing-stop">Trailing stop</option>
-                  <option value="trailing-stop-limit">Trailing stop limit</option>
-                </select></label>
+                <div class="plan-title">Your plan${initialPlan ? initialPlan.verified ? " · Verified caller" : ` · ${Math.round((parsed.confidence || 0) * 100)}% parser confidence` : ""}</div>
+                <label><span>How do I get in?</span><select class="entry-mode"><option value="market">Market</option><option value="limit">Limit</option><option value="twap">TWAP</option></select></label>
+                <label><span>How do I get out?</span><select class="exit-mode"><option value="none">No protection</option><option value="bracket">Stop + target</option></select></label>
                 <label class="limit-field" hidden><span>Limit price (USD)</span><input class="limit-price" inputmode="decimal" placeholder="0.00"></label>
-                <label class="trigger-field" hidden><span>Trigger price (USD)</span><input class="trigger-price" inputmode="decimal" placeholder="0.00"></label>
-                <label class="trigger-direction-field" hidden><span>Trigger direction</span><select class="trigger-direction"><option value="upper">Price rises above</option><option value="lower">Price falls below</option></select></label>
                 <label class="duration-field" hidden><span>Duration (seconds)</span><input class="duration" inputmode="numeric" value="1800"></label>
-                <label class="buckets-field" hidden><span>TWAP buckets</span><input class="buckets" inputmode="numeric" value="12"></label>
-                <label class="trail-field" hidden><span>Trail distance (%)</span><input class="trail" inputmode="decimal" value="5"></label>
-                <label class="activation-field" hidden><span>Activation price (optional)</span><input class="activation" inputmode="decimal" placeholder="Immediate"></label>
-                <label class="checkline bracket-toggle"><input class="attach-bracket" type="checkbox"><span>Add take-profit + stop-loss</span></label>
                 <label class="stop-field" hidden><span>Stop price (USD)</span><input class="stop-price" inputmode="decimal" placeholder="0.00"></label>
                 <label class="target-field" hidden><span>Target price (USD)</span><input class="target-price" inputmode="decimal" placeholder="0.00"></label>
+                <p class="plan-warning">First-time token approval costs gas. If price gaps through your entry, protection may activate immediately. Keep bought tokens in this wallet while protection is active.</p>
+                <details class="advanced"><summary>Advanced order types</summary><div class="advanced-grid">
+                  <label class="wide"><span>Flash order type</span><select class="order-type">
+                    <option value="market">Market</option><option value="limit">Limit</option><option value="twap">TWAP</option><option value="dca">DCA (scheduled TWAP)</option>
+                    <option value="stop">Stop</option><option value="stop-loss">Stop loss</option><option value="take-profit">Take profit</option><option value="bracket">Bracket (position exit)</option>
+                    <option value="trailing-stop">Trailing stop</option><option value="trailing-stop-limit">Trailing stop limit</option>
+                  </select></label>
+                  <label class="trigger-field" hidden><span>Trigger price (USD)</span><input class="trigger-price" inputmode="decimal" placeholder="0.00"></label>
+                  <label class="trigger-direction-field" hidden><span>Trigger direction</span><select class="trigger-direction"><option value="upper">Price rises above</option><option value="lower">Price falls below</option></select></label>
+                  <label class="buckets-field" hidden><span>TWAP buckets</span><input class="buckets" inputmode="numeric" value="12"></label>
+                  <label class="trail-field" hidden><span>Trail distance (%)</span><input class="trail" inputmode="decimal" value="5"></label>
+                  <label class="activation-field" hidden><span>Activation price (optional)</span><input class="activation" inputmode="decimal" placeholder="Immediate"></label>
+                </div></details>
+                <label class="checkline bracket-toggle" hidden><input class="attach-bracket" type="checkbox"><span>Add take-profit + stop-loss</span></label>
               </div>
               <div class="meta">
                 <div class="details"></div>
                 <span class="via"><b>Definitive Flash</b></span>
               </div>
               <div class="security" hidden></div>
-              <div class="kickback" hidden></div>
+              <div class="social-proof" hidden></div>
               <button class="cta"></button>
               <div class="status" hidden></div>
               <div class="powered">Powered by ${PLAN_B_LOGO_SVG}<b>Plan B</b></div>
             </div>
           </div>
         </div>
-        <div class="owner" hidden></div>
       </div>`;
 
     const $ = (selector) => root.querySelector(selector);
     applyTheme($(".root"), themeVars);
     const input = $(".amount");
     const status = $(".status");
+    let socialTimer = null;
 
     // Buy button inside the card: appended to X's flex row, so the sparkline shrinks to make room
     const triggerHost = document.createElement("span");
@@ -1089,20 +1054,6 @@
     function getToken() { return state.side === "buy" ? mainToken() : state.quoteToken; }
     function decimalsOf(symbol) { return tokenOn(state.chainId, symbol).decimals; }
     function walletOnChain() { return isSolana(state.chainId) ? !!wallet.solanaAccount : !!wallet.account && wallet.chainId === state.chainId; }
-    // The author's profile picture (full size), shown on the World ID page
-    function authorAvatar() {
-      const img = article.querySelector('[data-testid="Tweet-User-Avatar"] img');
-      return img && img.src.startsWith("https://pbs.twimg.com/") ? img.src.replace(/_(normal|bigger|x96)\./, "_400x400.") : "";
-    }
-    function isOwnTweet() { return !!author && sameHandle(author, loggedInHandle()); }
-    // Buys pay the author's kickback, unless the buyer is the author
-    function activeKickback() {
-      const kickback = state.kickback;
-      if (!kickback || state.side !== "buy" || sameHandle(loggedInHandle(), kickback.handle)) return null;
-      if (wallet.account && wallet.account.toLowerCase() === kickback.wallet.toLowerCase()) return null;
-      return kickback;
-    }
-
     // X streams price updates into the card, so always read the current value from it
     function tickerPrice() {
       if (!ticker.priceSpan.isConnected) {
@@ -1223,7 +1174,17 @@
 
       root.querySelectorAll(".seg button").forEach((b) => b.classList.toggle("on", b.dataset.side === state.side));
       $(".order-type").value = state.orderType;
+      $(".entry-mode").value = ["market", "limit", "twap"].includes(state.orderType) ? state.orderType : "market";
+      $(".exit-mode").value = state.attachBracket ? "bracket" : "none";
       $(".trigger-direction").value = state.triggerDirection;
+      $(".limit-price").value = state.limitPrice;
+      $(".trigger-price").value = state.triggerPrice;
+      $(".duration").value = state.durationSeconds;
+      $(".buckets").value = state.bucketCount;
+      $(".trail").value = state.trailPercent;
+      $(".activation").value = state.activationPrice;
+      $(".stop-price").value = state.stopPrice;
+      $(".target-price").value = state.targetPrice;
       const triggerOrder = ["stop", "stop-loss", "take-profit"].includes(state.orderType);
       const trailingOrder = ["trailing-stop", "trailing-stop-limit"].includes(state.orderType);
       const standaloneBracket = state.orderType === "bracket";
@@ -1236,7 +1197,7 @@
       $(".buckets-field").hidden = !["twap", "dca"].includes(state.orderType);
       $(".trail-field").hidden = !trailingOrder;
       $(".activation-field").hidden = !trailingOrder;
-      $(".bracket-toggle").hidden = !bracketAllowed;
+      $(".bracket-toggle").hidden = true;
       $(".attach-bracket").checked = state.attachBracket;
       $(".stop-field").hidden = !standaloneBracket && !(bracketAllowed && state.attachBracket);
       $(".target-field").hidden = !standaloneBracket && !(bracketAllowed && state.attachBracket);
@@ -1283,7 +1244,6 @@
       $(".details").innerHTML = parts.join("<span>·</span>");
 
       renderSecurity();
-      renderKickback(received);
 
       // Main button
       const cta = $(".cta");
@@ -1344,21 +1304,15 @@
       }
     }
 
-    function renderKickback(received) {
-      const row = $(".kickback");
-      row.hidden = true;
-      const owner = $(".owner");
-      owner.hidden = true;
-    }
-
-    function loadKickback() {
-      if (!author) return;
-      kickbackFor(author).then((kickback) => {
-        const changed = (kickback && kickback.wallet) !== (state.kickback && state.kickback.wallet);
-        state.kickback = kickback;
-        if (changed && !state.busy) scheduleQuote(); // the fee changes the quote
-        else render();
-      }, (error) => console.warn("[Plan B] Kickback lookup failed:", error.message));
+    async function loadSocialProof() {
+      const id = tweetId(article);
+      if (!id && !author) return;
+      try {
+        const proof = await plansApi("social", id ? { tweetId: id } : { authorHandle: author });
+        const row = $(".social-proof");
+        row.hidden = !(proof.followed || proof.hitTarget || proof.stoppedOut || proof.active);
+        row.innerHTML = `<b>${Number(proof.followed) || 0} followed</b> · ${Number(proof.hitTarget) || 0} hit target · ${Number(proof.stoppedOut) || 0} stopped out${proof.active ? ` · ${Number(proof.active)} active` : ""}`;
+      } catch { /* Social proof is additive; trading remains available if it is offline. */ }
     }
 
     function checkSecurity() {
@@ -1696,6 +1650,17 @@
         step("Submitting order…");
         const placed = await flashApi("order", submit);
         state.orderId = placed.orderId;
+        plansApi("create", {
+          orderId: placed.orderId,
+          tweetId: tweetId(article),
+          authorHandle: author,
+          funderAddress: funder,
+          token: mainToken(),
+          chain: chain().flash,
+          planType: `${state.orderType}${state.attachBracket ? "+bracket" : ""}`,
+          stopLoss: state.attachBracket ? state.stopPrice : null,
+          takeProfit: state.attachBracket ? state.targetPrice : null,
+        }).then(loadSocialProof, (error) => console.warn("[Plan B] Could not record social plan:", error.message));
         let statusText = "submitted";
         let txLink = "";
         if (state.orderType === "market") {
@@ -1762,10 +1727,6 @@
       const target = event.target;
       const riskButton = target.closest("[data-risk]");
       if (riskButton) { answerRisk(riskButton.dataset.risk === "continue"); return; }
-      if (target.closest(".earn")) {
-        chrome.runtime.sendMessage({ action: "openKickbacks", handle: loggedInHandle(), wallet: wallet.account, avatar: authorAvatar() });
-        return;
-      }
       if (state.busy) return;
       const walletButton = target.closest(".wallet");
       if (walletButton) {
@@ -1820,7 +1781,12 @@
 
     root.addEventListener("change", (event) => {
       const target = event.target;
-      if (target.matches(".order-type")) {
+      if (target.matches(".entry-mode")) {
+        state.orderType = target.value;
+        state.attachBracket = $(".exit-mode").value === "bracket";
+      } else if (target.matches(".exit-mode")) {
+        state.attachBracket = target.value === "bracket";
+      } else if (target.matches(".order-type")) {
         state.orderType = target.value;
         if (["stop-loss", "take-profit", "bracket"].includes(state.orderType) && state.side !== "sell") setSide("sell");
         if (!["market", "limit", "twap", "dca"].includes(state.orderType)) state.attachBracket = false;
@@ -1855,8 +1821,9 @@
     if (!quoteTokens().includes(state.quoteToken)) state.quoteToken = quoteTokens()[0];
 
     host.addEventListener("plan-b:wallet", () => { followWalletChain(); refreshBalance(); render(); });
-    host.addEventListener("plan-b:kickback", loadKickback);
     checkSecurity(); // verdicts are cached per token (here and in the backend), so cards scrolling by stay cheap
+    loadSocialProof();
+    socialTimer = setInterval(() => host.isConnected ? loadSocialProof() : clearInterval(socialTimer), 15000);
     // Keep the card-price line current while no quote is shown
     new MutationObserver(() => { if (!state.quote && !state.busy) render(); }).observe(link, { childList: true, characterData: true, subtree: true });
     render();
@@ -1866,6 +1833,169 @@
   // ---------------------------------------------------------------------------
   // Finding ticker cards in the timeline (X re-renders tweets, so keep scanning)
   // ---------------------------------------------------------------------------
+  function tweetId(article) {
+    const link = article.querySelector('a[href*="/status/"] time')?.closest('a[href*="/status/"]');
+    const match = link && (link.getAttribute("href") || "").match(/\/status\/(\d+)/);
+    return match ? match[1] : null;
+  }
+
+  function tweetText(article) {
+    return (article.querySelector('[data-testid="tweetText"]')?.innerText || "").trim();
+  }
+
+  function createParsedPlanCard(article, result) {
+    article.querySelector('[data-plan-b-draft]')?.remove();
+    registerFlashAsset(result.asset);
+    const symbol = result.asset.symbol;
+    TICKER_TO_TOKENS[symbol.toUpperCase()] = [symbol];
+
+    const wrap = document.createElement("div");
+    wrap.setAttribute("data-plan-b-draft", "");
+    wrap.style.cssText = "margin:10px 0 2px;max-width:100%;";
+    const card = document.createElement("div");
+    const price = Number(result.asset.price) || 0;
+    card.style.cssText = "display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid color-mix(in srgb,currentColor 18%,transparent);border-radius:12px;font:inherit;";
+    const icon = result.asset.imageUrl && /^https:\/\//.test(result.asset.imageUrl)
+      ? `<img src="${escapeHtml(result.asset.imageUrl)}" alt="" style="width:30px;height:30px;border-radius:50%;object-fit:cover">`
+      : `<span style="width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#1d9bf0;color:white;font-weight:700">${escapeHtml(symbol.slice(0, 1))}</span>`;
+    card.innerHTML = `${icon}<span style="display:flex;flex-direction:column;min-width:0"><b class="plan-name">${escapeHtml(result.asset.name || symbol)}</b><span class="plan-symbol" style="opacity:.65;font-size:13px">${escapeHtml(symbol)} · ${escapeHtml(CHAINS[FLASH_TO_CHAIN[result.asset.chain]]?.name || result.asset.chain)}</span></span><span class="plan-price" style="margin-left:auto;font-weight:700">${price ? formatUsd(price) : "Flash asset"}</span>`;
+    wrap.appendChild(card);
+    const ticker = {
+      symbol: symbol.toUpperCase(),
+      name: result.asset.name || symbol,
+      price,
+      priceSpan: card.querySelector(".plan-price"),
+      iconSrc: result.asset.imageUrl || null,
+      nameSpan: card.querySelector(".plan-name"),
+      symbolSpan: card.querySelector(".plan-symbol"),
+    };
+    const panel = createPanel(article, card, ticker, {
+      ...result,
+      context: { tweetId: tweetId(article), authorHandle: tweetAuthor(article) },
+    });
+    wrap.appendChild(panel);
+    const actionBar = article.querySelector('[data-testid="reply"]')?.closest('[role="group"]');
+    (actionBar || article.lastElementChild || article).after(wrap);
+    return wrap;
+  }
+
+  function attachPlanButton(article) {
+    const text = tweetText(article);
+    if (!text) return;
+    const actionBar = article.querySelector('[data-testid="reply"]')?.closest('[role="group"]');
+    if (!actionBar || actionBar.querySelector('[data-plan-b-make-plan]')) return;
+
+    const host = document.createElement("span");
+    host.setAttribute("data-plan-b-make-plan", "");
+    host.style.cssText = "display:inline-flex;align-items:center;flex:0 0 auto;";
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = `<style>
+      :host{all:initial}.make{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:0;border-radius:999px;background:transparent;color:rgb(83,100,113);font:600 12px system-ui;cursor:pointer}.make:hover{color:rgb(0,186,124);background:rgba(0,186,124,.1)}.make:disabled{opacity:.65;cursor:wait}.dot{width:7px;height:7px;border-radius:50%;background:rgb(0,186,124)}
+    </style><button class="make" type="button"><span class="dot"></span><span>Make plan</span></button>`;
+    const button = root.querySelector("button");
+    host.addEventListener("click", (event) => event.stopPropagation());
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (button.disabled) return;
+      button.disabled = true;
+      button.lastElementChild.textContent = "Reading plan…";
+      try {
+        const result = await parsePlanApi(text);
+        await discoverTicker(result.asset.symbol);
+        createParsedPlanCard(article, result);
+        button.lastElementChild.textContent = "Plan ready";
+      } catch (error) {
+        button.lastElementChild.textContent = error.message || "No clear plan";
+        button.title = error.details ? `${(error.details.missing || []).join(", ")} ${(error.details.ambiguous || []).join(", ")}`.trim() : error.message;
+        setTimeout(() => { button.disabled = false; button.lastElementChild.textContent = "Make plan"; }, 3500);
+        return;
+      }
+      button.disabled = false;
+    });
+    actionBar.appendChild(host);
+  }
+
+  function ensureOrderDashboard() {
+    if (document.querySelector('[data-plan-b-orders]')) return;
+    const host = document.createElement("div");
+    host.setAttribute("data-plan-b-orders", "");
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = `<style>
+      :host{all:initial;font-family:system-ui;color:#e7e9ea}.launcher{position:fixed;right:22px;bottom:22px;z-index:2147483645;border:0;border-radius:999px;background:#7bf38b;color:#071109;font:700 13px system-ui;padding:11px 16px;box-shadow:0 10px 35px #0008;cursor:pointer}.drawer{position:fixed;right:18px;bottom:72px;z-index:2147483646;width:min(390px,calc(100vw - 24px));max-height:min(680px,calc(100vh - 100px));display:none;flex-direction:column;background:#080b09;border:1px solid #29322c;border-radius:18px;box-shadow:0 24px 70px #000b;overflow:hidden}.drawer.open{display:flex}.head{display:flex;align-items:center;justify-content:space-between;padding:16px;border-bottom:1px solid #202622}.head b{font-size:17px}.close{border:0;background:none;color:#88938c;font-size:22px;cursor:pointer}.tabs{display:grid;grid-template-columns:repeat(3,1fr);padding:8px;border-bottom:1px solid #202622}.tab{border:0;background:none;color:#88938c;padding:9px;font:700 12px system-ui;cursor:pointer;border-radius:9px}.tab.on{background:#182019;color:#7bf38b}.list{overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px}.empty{padding:30px 18px;text-align:center;color:#88938c;font-size:13px}.row{border:1px solid #202622;border-radius:12px;padding:12px;display:grid;gap:8px}.top{display:flex;justify-content:space-between;gap:10px}.token{font-weight:800}.state{font-size:11px;text-transform:uppercase;color:#7bf38b}.meta{color:#88938c;font-size:12px}.actions{display:flex;gap:7px;flex-wrap:wrap}.actions button,.actions a{border:1px solid #334038;background:none;color:#e7e9ea;border-radius:999px;padding:7px 10px;font:700 11px system-ui;text-decoration:none;cursor:pointer}.actions .danger{border-color:#713b3b;color:#ff8d8d}.actions .share{border-color:#315f41;color:#7bf38b}.notice{padding:10px 16px;color:#88938c;font-size:12px;border-top:1px solid #202622}.error{color:#ff8d8d}
+    </style><button class="launcher">Plan B orders</button><section class="drawer" aria-label="Plan B orders"><div class="head"><b>Your plans</b><button class="close" aria-label="Close">×</button></div><div class="tabs"><button class="tab on" data-tab="open">Open</button><button class="tab" data-tab="filled">Filled</button><button class="tab" data-tab="cancelled">Cancelled</button></div><div class="list"></div><div class="notice">Connect a wallet in a Plan B card to load its orders.</div></section>`;
+    document.body.appendChild(host);
+    const drawer = root.querySelector(".drawer");
+    const list = root.querySelector(".list");
+    const notice = root.querySelector(".notice");
+    let activeTab = "open";
+    let rows = [];
+
+    const stateGroup = (plan) => {
+      if (["cancelled", "failed"].includes(plan.state)) return "cancelled";
+      if (["hit_target", "stopped_out"].includes(plan.state)) return "filled";
+      return "open";
+    };
+    const stateLabel = (state) => ({ waiting: "Waiting", filled: "Entry filled", hit_target: "Hit target", stopped_out: "Stopped out", cancelled: "Cancelled", failed: "Failed" }[state] || state);
+    const renderRows = () => {
+      root.querySelectorAll(".tab").forEach((button) => button.classList.toggle("on", button.dataset.tab === activeTab));
+      const visible = rows.filter((plan) => stateGroup(plan) === activeTab);
+      list.innerHTML = visible.length ? visible.map((plan) => {
+        const resolved = ["hit_target", "stopped_out"].includes(plan.state);
+        const shareText = `${plan.token} plan ${plan.state === "hit_target" ? "hit its target" : "was stopped out"} via Plan B. Order ${plan.orderId}`;
+        return `<article class="row" data-id="${escapeHtml(plan.orderId)}"><div class="top"><span class="token">${escapeHtml(plan.token)} · ${escapeHtml(plan.planType)}</span><span class="state">${escapeHtml(stateLabel(plan.state))}</span></div><div class="meta">${escapeHtml(plan.chain)} · ${new Date(plan.createdAt).toLocaleString()}</div><div class="actions">${activeTab === "open" ? `<button class="danger" data-cancel="entry">Cancel entry</button>${plan.bracketOrderId ? '<button class="danger" data-cancel="both">Cancel entry + protection</button>' : ""}` : ""}${resolved ? `<a class="share" target="_blank" rel="noopener" href="https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}">Share receipt on X ↗</a>` : ""}</div></article>`;
+      }).join("") : `<div class="empty">No ${activeTab} plans for this wallet.</div>`;
+    };
+    const load = async () => {
+      const funderAddress = wallet.account || wallet.solanaAccount;
+      if (!funderAddress) { rows = []; notice.textContent = "Connect a wallet in a Plan B card to load its orders."; renderRows(); return; }
+      try {
+        const response = await plansApi("list", { funderAddress });
+        rows = response.plans || [];
+        notice.textContent = "Live states are supplied by Definitive Flash.";
+        renderRows();
+      } catch (error) {
+        notice.textContent = error.message;
+        notice.classList.add("error");
+      }
+    };
+    const signCancel = async (orderId, chain) => {
+      const message = `Definitive Flash v1 — Cancel Order\nOrder: ${orderId}`;
+      const userSignature = chain === "solana"
+        ? await walletRequest("solana_sign_message", [message])
+        : await walletRequest("personal_sign", [utf8ToHex(message), wallet.account]);
+      await flashApi("cancel-order", { orderId, cancelMessage: message, userSignature });
+    };
+    root.querySelector(".launcher").addEventListener("click", () => { drawer.classList.toggle("open"); if (drawer.classList.contains("open")) load(); });
+    root.querySelector(".close").addEventListener("click", () => drawer.classList.remove("open"));
+    root.querySelector(".tabs").addEventListener("click", (event) => { const tab = event.target.closest("[data-tab]"); if (tab) { activeTab = tab.dataset.tab; renderRows(); } });
+    list.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-cancel]");
+      if (!button) return;
+      const plan = rows.find((row) => row.orderId === button.closest("[data-id]").dataset.id);
+      if (!plan) return;
+      button.disabled = true;
+      button.textContent = "Check wallet…";
+      try {
+        const orderIds = button.dataset.cancel === "both" && plan.bracketOrderId
+          ? [plan.orderId, plan.bracketOrderId]
+          : [plan.orderId];
+        const failures = [];
+        for (const orderId of orderIds) {
+          try { await signCancel(orderId, plan.chain); }
+          catch (error) { failures.push(error); }
+        }
+        if (failures.length === orderIds.length) throw failures[0];
+        if (failures.length) notice.textContent = "One order was already closed; the other cancellation was submitted.";
+        await load();
+      } catch (error) {
+        button.textContent = /reject|denied/i.test(error.message) ? "Cancelled in wallet" : error.message;
+        button.disabled = false;
+      }
+    });
+    setInterval(() => drawer.classList.contains("open") && load(), 5000);
+  }
+
   async function attachToCard(article, list) {
     // The card container is the element wrapping X's ScrollSnap carousel <nav>
     const nav = list.closest("nav");
@@ -1902,7 +2032,9 @@
   }
 
   function scan() {
+    ensureOrderDashboard();
     document.querySelectorAll('article[data-testid="tweet"]').forEach((article) => {
+      attachPlanButton(article);
       article.querySelectorAll('[data-testid="ScrollSnap-List"]').forEach((list) => attachToCard(article, list));
     });
   }

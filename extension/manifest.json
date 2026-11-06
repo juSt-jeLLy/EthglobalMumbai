@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Plan B",
-  "version": "2.0",
-  "description": "Turn X ticker cards into market, limit, trigger, TWAP, bracket and trailing orders powered by Definitive Flash.",
+  "version": "3.0",
+  "description": "Turn any X post into a validated, editable trading plan powered by Groq and Definitive Flash.",
   "host_permissions": [
     "http://*/*",
     "https://*/*"
