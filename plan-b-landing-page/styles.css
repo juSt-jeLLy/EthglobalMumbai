@@ -269,6 +269,7 @@ code { font: 12px var(--mono); padding: 2px 6px; color: var(--green); background
 /* Caller Card */
 .caller-page { min-height: 100vh; }
 .site-nav { height: 82px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+.page-nav { display:flex; align-items:center; gap:18px; }.page-nav a { color:var(--muted); font:600 11px var(--mono); text-decoration:none; }.page-nav a:hover { color:var(--green); }
 .nav-cta { color: var(--muted); font-weight: 700; text-decoration: none; }
 .nav-cta:hover { color: var(--text); }
 .eyebrow { color: var(--green); font: 500 11px var(--mono); letter-spacing: .11em; }
@@ -303,6 +304,7 @@ code { font: 12px var(--mono); padding: 2px 6px; color: var(--green); background
 .leaderboard-row i { color: var(--green); font: normal 11px var(--mono); margin-right: 14px; }
 .leaderboard-head { color: var(--muted); font: 600 10px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
 .leaderboard-empty { padding: 42px; color: var(--muted); text-align: center; }
+.passport-shell { padding-top:clamp(90px, 12vw, 150px); padding-bottom:100px; }.passport-shell h1 { margin:20px 0; max-width:900px; font-size:clamp(48px,8vw,104px); line-height:.9; letter-spacing:-.07em; }.passport-list { display:grid; gap:14px; margin-top:48px; }.passport-card { padding:clamp(18px,3vw,28px); border:1px solid var(--line); background:linear-gradient(145deg,rgba(255,255,255,.02),transparent 55%),var(--surface); }.passport-card header { display:flex; justify-content:space-between; gap:18px; }.passport-card h2 { margin:8px 0 4px; font-size:30px; }.passport-card h2 small,.passport-card header p { color:var(--muted); font:12px var(--mono); }.passport-outcome { color:var(--green); font:600 18px var(--mono); }.passport-card dl { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:22px 0; }.passport-card dl div { min-width:0; padding:11px; border:1px solid var(--line); background:#090d0a; }.passport-card dt { color:var(--muted); font:10px var(--mono); text-transform:uppercase; letter-spacing:.06em; }.passport-card dd { overflow:hidden; margin:7px 0 0; color:var(--text); font:12px var(--mono); text-overflow:ellipsis; white-space:nowrap; }.passport-card footer { display:flex; flex-wrap:wrap; gap:16px; color:var(--muted); font-size:12px; }.passport-card footer a { color:var(--green); font:600 12px var(--mono); text-decoration:none; }
 @media (max-width: 650px) { .leaderboard-row { grid-template-columns: 1.5fr repeat(4, .7fr); gap: 8px; padding: 14px 10px; font-size: 12px; } .leaderboard-row i { display: none; } }
 
 /* Radar terminal and caller records */
@@ -324,3 +326,4 @@ code { font: 12px var(--mono); padding: 2px 6px; color: var(--green); background
 .radar-revision { display:grid; gap:3px; margin-top:14px; padding:10px 12px; border:1px solid rgba(217,255,91,.24); background:rgba(217,255,91,.05); }.radar-revision b{color:var(--yellow);font-size:12px}.radar-revision span{color:var(--muted);font-size:12px}
 .creator-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 42px 0 18px; border: 1px solid var(--line); }.creator-stats div { display: grid; gap: 7px; min-height: 104px; padding: 18px; border-right: 1px solid var(--line); }.creator-stats div:last-child { border-right: 0; }.creator-stats span { color: var(--muted); font: 10px var(--mono); text-transform: uppercase; }.creator-stats b { font-size: 18px; }
 @media (max-width: 760px) { .radar-controls { grid-template-columns: 1fr; }.creator-stats { grid-template-columns: repeat(2, 1fr); }.creator-stats div { border-bottom: 1px solid var(--line); }.creator-stats div:nth-child(2n) { border-right: 0; } }
+@media (max-width: 760px) { .page-nav { display:none; }.passport-card dl { grid-template-columns:repeat(2,minmax(0,1fr)); } }

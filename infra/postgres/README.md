@@ -1,6 +1,6 @@
 # Plan B PostgreSQL infrastructure
 
-This directory contains the production PostgreSQL schema for Plan B's durable
+This directory contains the production-grade PostgreSQL schema for Plan B's durable
 social-trading records: Caller Cards, Signal Passports, revisions, source
 checks, follower plans, Flash order events, and caller subscriptions.
 
@@ -8,7 +8,7 @@ The backend uses PostgreSQL as its only runtime store. It will fail fast if
 `DATABASE_URL` is absent or unreachable; it never silently falls back to
 `backend/data/*.json`.
 
-## Local production-schema rehearsal
+## Local PostgreSQL environment
 
 ```bash
 cd infra/postgres
@@ -40,7 +40,7 @@ DATABASE_SSL=true
 DATABASE_POOL_MAX=10
 ```
 
-On startup the backend applies ordered migrations and loads durable plans,
+On startup the backend applies ordered migrations and loads production-grade durable plans,
 signals, subscriptions, and World verification records from `runtime_documents`.
 The normalized tables in `001_plan_b.sql` are retained for future analytical
 projections; the document store preserves the current API records (including

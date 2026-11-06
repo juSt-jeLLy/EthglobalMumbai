@@ -6,7 +6,7 @@ The Chrome extension is the in-context execution surface; Caller Cards, Radar, t
 
 The product principle is simple: social posts may suggest a strategy, but only the follower chooses size, reviews the exact asset and protections, and signs from their own wallet.
 
-Plan B persists durable Caller Cards, Signal Passports, revisions, subscriptions, follower plans, and Flash lifecycle events in PostgreSQL. The backend applies its migrations at startup and fails fast without `DATABASE_URL`, rather than silently falling back to local JSON; see [PostgreSQL infrastructure](infra/postgres/README.md).
+Plan B uses a **production-grade PostgreSQL database** for durable Caller Cards, Signal Passports, revisions, subscriptions, follower plans, World verification records, and Flash lifecycle events. The backend applies ordered migrations before it accepts requests; see [PostgreSQL infrastructure](infra/postgres/README.md).
 
 ## Why Plan B exists
 
@@ -151,7 +151,17 @@ The [Radar terminal](plan-b-landing-page/radar.html) provides separate feeds for
 
 When a user follows a Caller Card from the extension, Chrome stores the wallet locally and polls the local backend once per minute. It sends native notifications only for new validated followed signals or new swarms—existing signals are seeded silently to avoid alert spam. Clicking an alert opens the exact source post (or Radar for a swarm). This works without X API credentials or an external push provider.
 
-### 8. Execution receipts and order lifecycle
+### 8. Product surfaces
+
+The landing navigation exposes the social-trading evidence rather than leaving it only in storage:
+
+- [Radar](plan-b-landing-page/radar.html) filters signed and observed signals, shows freshness, recommendation, contract-integrity result, revisions, source links, swarms, and follower activity.
+- [Signal Passports](plan-b-landing-page/passports.html) show the evidence record: exact contract, Flash capture price, validity window, source and verification state, text hash, settlement result, and follower outcomes. Observed signals remain explicitly labelled and do not affect caller reputation.
+- [Caller Rankings](plan-b-landing-page/rankings.html) rank callers only from actual resolved Flash follower outcomes.
+- [Outcomes](plan-b-landing-page/leaderboard.html) show follower target-hit, stopped-out, and reliability results.
+- [Create Caller Card](plan-b-landing-page/caller.html) is the signed strategy publisher, with World Proof of Human when configured.
+
+### 9. Execution receipts and order lifecycle
 
 After a user signs and submits a Flash order, Plan B stores a local plan record linked to the source signal and caller. It can retain:
 
@@ -272,6 +282,8 @@ Open:
 - `http://127.0.0.1:4173/` — product landing page
 - `http://127.0.0.1:4173/caller.html` — create and sign a Caller Card
 - `http://127.0.0.1:4173/radar.html` — social signal Radar
+- `http://127.0.0.1:4173/passports.html` — full Signal Passport evidence records
+- `http://127.0.0.1:4173/rankings.html` — caller rankings from Flash follower outcomes
 - `http://127.0.0.1:4173/leaderboard.html` — follower-outcome leaderboard
 
 ## API map
@@ -301,7 +313,7 @@ Open:
 - “Price in favor” on a Passport is a post-expiry mark-price measurement, **not** proof that a caller’s target filled.
 - Actual follower target/stop outcomes come from Flash order events.
 - A source check can establish public availability evidence; without X OAuth/API it is not a full proof of X-account ownership.
-- Local JSON files under `backend/data/` are hackathon/demo storage, not a production ledger or multi-user database.
+- PostgreSQL is the required runtime database. Legacy JSON is available only for the explicit one-time `npm run db:import-json` migration command and is never used as a runtime fallback.
 - The local notification loop can alert on signals already known to Plan B. Fully automatic discovery of arbitrary KOL posts requires X API access and remains outside the current local build.
 
 ## Repository guide
@@ -316,7 +328,7 @@ Open:
 | Radar, subscriptions, and swarms | `backend/radar.js` |
 | X UI, wallet interaction, in-X dashboard | `extension/x-ticker-swap.js`, `extension/bridge.js` |
 | Background notifications and backend messaging | `extension/background.js` |
-| Landing, Caller, Radar, creator and leaderboard pages | `plan-b-landing-page/` |
+| Landing, Caller, Radar, Passport, ranking, creator and outcome pages | `plan-b-landing-page/` |
 | Flash docs snapshot | `docs/definitive-flash/` |
 
 ## Verification

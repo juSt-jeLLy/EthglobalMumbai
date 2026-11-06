@@ -1,6 +1,6 @@
 # Plan B — Build status
 
-Last updated: 2026-11-06
+Last updated: 2026-11-07
 
 ## Product loop that is implemented
 
@@ -21,6 +21,7 @@ Last updated: 2026-11-06
 - **No fake combined trust score:** identity verification, historical signed-call outcomes, follower Flash outcomes, contract integrity and token safety remain separate concepts in the UI/data.
 - **Caller record:** only signed Caller Cards count toward hit rate and median price-direction result. Parsed public posts can be observed but never improve a caller score.
 - **Radar:** `GET /terminal` has distinct `verified` and `observed` feeds. Observed posts never count toward reputation and are labelled manual review; the signed feed supports state/order filters, swarm cards, Flash execution recommendations and a browser-local X-handle watchlist.
+- **Evidence surfaces:** the landing app exposes Radar, Signal Passports, Caller Rankings, Outcomes, and Caller Card creation. Signal Passports display contract, capture price, expiry, source/verification status, text hash, settlement and follower outcomes; observed records remain visibly separate from signed Caller Cards.
 - **Methodology gate:** caller records are `unscored`, `emerging`, or `established`; at least five expiry-scored signed Caller Cards are required before the hit rate is labelled established. Chain and order-type counts stay visible rather than becoming a synthetic trust score.
 - **Local notifications:** after a follower enables alerts for a caller, the Chrome extension performs a one-minute local Radar check. It only notifies on newly seen, validated Caller Cards or new swarms; clicking an alert opens its source. This requires no X API or push provider.
 
@@ -28,7 +29,7 @@ Last updated: 2026-11-06
 
 - A Passport expiry result is a Flash mark-price direction check, not proof that a target or stop executed. Actual follower target/stop outcomes come from Flash order events.
 - “Post removed” requires two consecutive public `404` source checks. An API/network problem stays `unavailable`.
-- PostgreSQL is the required runtime store for plans, Signal Passports, caller subscriptions, and World verification records. Legacy JSON can be imported once with `npm run db:import-json`; it is never used as a runtime fallback.
+- A production-grade PostgreSQL database is the required runtime store for plans, Signal Passports, caller subscriptions, and World verification records. Legacy JSON can be imported once with `npm run db:import-json`; it is never used as a runtime fallback.
 - The app does not auto-sign, copy wallet balances, auto-execute a caller’s trade, or parse a user’s size from a post.
 - The Flash search entitlement must be active for fully live asset discovery. The existing DEX metadata fallback is only for draft discovery; Flash remains the executor and final quote source.
 
