@@ -1,6 +1,8 @@
 # Plan B
 
-**Plan B turns a trading signal on X into an editable, non-custodial Definitive Flash advanced-order plan.** It is a Chrome extension, a small Node backend, and a social trading surface—not an auto-trader and not a wallet custodian.
+**Plan B is an X-native social trading product that turns a trading signal into a ready-to-sign, non-custodial Definitive Flash advanced order.** Trade a signal with a market, limit, TWAP, stop, bracket, or trailing strategy directly from X—after reviewing the plan and choosing your own size.
+
+The Chrome extension is the in-context execution surface; Caller Cards, Radar, the validation backend, and Flash lifecycle tracking make Plan B a social trading product, not merely an extension. It is not an auto-trader and never custodians a wallet or private key.
 
 The product principle is simple: social posts may suggest a strategy, but only the follower chooses size, reviews the exact asset and protections, and signs from their own wallet.
 

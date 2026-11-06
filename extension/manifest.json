@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Plan B",
   "version": "3.0",
-  "description": "Turn any X post into a validated, editable trading plan powered by Groq and Definitive Flash.",
+  "description": "Trade X signals with validated Definitive Flash market, limit, TWAP, stop, bracket, and trailing orders.",
   "host_permissions": [
     "http://*/*",
     "https://*/*"
