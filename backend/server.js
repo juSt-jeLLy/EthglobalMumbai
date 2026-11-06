@@ -6,7 +6,7 @@ const { parsePlanCtrl } = require('./parser.js')
 const { tokenSecurityCtrl } = require('./security.js')
 const { createPlanCtrl, listPlansCtrl, socialProofCtrl, leaderboardCtrl, planEventsCtrl } = require('./plans.js')
 const { startFlashOrderStream } = require('./flash-stream.js')
-const { prepareSignalCtrl, createSignalCtrl, captureSignalCtrl, attachSourceCtrl, prepareRevisionCtrl, createRevisionCtrl, passportCtrl, creatorProfileCtrl, getSignalCtrl } = require('./signals.js')
+const { prepareSignalCtrl, createSignalCtrl, captureSignalCtrl, attachSourceCtrl, prepareRevisionCtrl, createRevisionCtrl, passportCtrl, creatorProfileCtrl, getSignalCtrl, startSourceMonitor } = require('./signals.js')
 const { subscribeCtrl, radarCtrl, terminalCtrl, roomCtrl } = require('./radar.js')
 const app = express()
 const port = process.env.PORT || 8000
@@ -72,4 +72,5 @@ app.use((error, req, res, next) => {
 app.listen(port, () => {
   console.log(`Plan B backend listening on port ${port}`)
   startFlashOrderStream()
+  startSourceMonitor()
 })

@@ -16,6 +16,8 @@ function readSignals() {
 }
 
 let signals = readSignals()
+let sourceMonitorRunning = false
+let sourceMonitorTimer = null
 
 function saveSignals() {
   fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -155,8 +157,47 @@ async function checkAvailability(signal) {
     saveSignals()
   } catch {
     passport.availability = { ...(passport.availability || {}), status: 'unavailable', checks: passport.availability && passport.availability.checks || [] }
+    saveSignals()
   }
   return passport.availability
+}
+
+function lastSourceCheckAt(signal) {
+  const checks = signal && signal.passport && signal.passport.availability && signal.passport.availability.checks
+  const last = Array.isArray(checks) && checks.at(-1)
+  const timestamp = last && Date.parse(last.checkedAt)
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
+
+// Checks only attested Caller Cards with public URLs. This is deliberately a
+// small, bounded worker: public source availability is evidence, never a
+// prerequisite for placing a signed Flash order.
+async function sweepSourceAvailability({ limit = 6, minAgeMs = 15 * 60 * 1000 } = {}) {
+  if (sourceMonitorRunning) return { skipped: true, checked: 0 }
+  sourceMonitorRunning = true
+  try {
+    const cutoff = Date.now() - Math.max(60 * 1000, Number(minAgeMs) || 0)
+    const candidates = signals
+      .filter((signal) => signal && signal.verified && signal.passport && signal.passport.sourceUrl)
+      .filter((signal) => lastSourceCheckAt(signal) <= cutoff)
+      .sort((a, b) => lastSourceCheckAt(a) - lastSourceCheckAt(b))
+      .slice(0, Math.min(20, Math.max(1, Number(limit) || 6)))
+    await Promise.allSettled(candidates.map(checkAvailability))
+    return { skipped: false, checked: candidates.length }
+  } finally {
+    sourceMonitorRunning = false
+  }
+}
+
+function startSourceMonitor() {
+  if (sourceMonitorTimer) return sourceMonitorTimer
+  const configured = Number(process.env.SOURCE_MONITOR_INTERVAL_MS)
+  const intervalMs = Number.isFinite(configured) ? Math.max(60 * 1000, configured) : 15 * 60 * 1000
+  const run = () => { void sweepSourceAvailability({ minAgeMs: intervalMs }).catch(() => {}) }
+  const initial = setTimeout(run, 3000)
+  if (typeof initial.unref === 'function') initial.unref()
+  sourceMonitorTimer = setInterval(run, intervalMs)
+  return sourceMonitorTimer
 }
 
 async function prepareSignalCtrl(req, res) {
@@ -341,4 +382,4 @@ function getSignalCtrl(req, res) {
 
 function listObservedSignals() { return signals.filter((signal) => signal && !signal.verified) }
 
-module.exports = { prepareSignalCtrl, createSignalCtrl, captureSignalCtrl, attachSourceCtrl, prepareRevisionCtrl, createRevisionCtrl, passportCtrl, creatorProfileCtrl, getSignalCtrl, getSignal, listSignals, listObservedSignals, settlePassport, checkAvailability, canonicalRevisionMessage }
+module.exports = { prepareSignalCtrl, createSignalCtrl, captureSignalCtrl, attachSourceCtrl, prepareRevisionCtrl, createRevisionCtrl, passportCtrl, creatorProfileCtrl, getSignalCtrl, getSignal, listSignals, listObservedSignals, settlePassport, checkAvailability, sweepSourceAvailability, startSourceMonitor, canonicalRevisionMessage }

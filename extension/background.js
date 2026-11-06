@@ -2,10 +2,18 @@
 const BACKEND_URL = "http://localhost:8000";
 
 const RADAR_ALARM = "plan-b-radar";
-chrome.alarms.create(RADAR_ALARM, { periodInMinutes: 1 });
+const RADAR_INTERVAL_MINUTES = 1;
 
-async function pollRadar() {
-  const { radarWallet, radarSeen = [] } = await chrome.storage.local.get(["radarWallet", "radarSeen"]);
+function ensureRadarAlarm() {
+  chrome.alarms.create(RADAR_ALARM, { periodInMinutes: RADAR_INTERVAL_MINUTES });
+}
+
+ensureRadarAlarm();
+chrome.runtime.onInstalled.addListener(ensureRadarAlarm);
+chrome.runtime.onStartup.addListener(ensureRadarAlarm);
+
+async function pollRadar({ announce = true } = {}) {
+  const { radarWallet, radarSeen = [], notificationTargets = {} } = await chrome.storage.local.get(["radarWallet", "radarSeen", "notificationTargets"]);
   if (!radarWallet) return;
   try {
     const response = await fetch(`${BACKEND_URL}/radar?${new URLSearchParams({ funderAddress: radarWallet })}`);
@@ -15,25 +23,36 @@ async function pollRadar() {
     const fresh = (payload.signals || []).filter((signal) => !seen.has(signal.id));
     for (const signal of fresh.slice(0, 3)) {
       const decay = signal.decay && signal.decay.label ? ` · ${signal.decay.label}` : "";
-      chrome.notifications.create(`signal:${signal.id}`, {
-        type: "basic",
-        iconUrl: "images/icon128.png",
-        title: `New ${signal.asset.symbol} strategy`,
-        message: `${signal.strategy && signal.strategy.summary || "Verified Plan B strategy"}${decay}`,
-      });
+      const notificationId = `signal:${signal.id}`;
+      const sourceUrl = signal.passport && signal.passport.sourceUrl || "http://127.0.0.1:4173/radar.html";
+      notificationTargets[notificationId] = sourceUrl;
+      if (announce) {
+        chrome.notifications.create(notificationId, {
+          type: "basic",
+          iconUrl: "images/icon128.png",
+          title: `New ${signal.asset.symbol} strategy`,
+          message: `${signal.strategy && signal.strategy.summary || "Verified Plan B strategy"}${decay}`,
+        });
+      }
       seen.add(signal.id);
     }
     for (const swarm of (payload.swarms || []).slice(0, 2)) {
       const key = `swarm:${swarm.id}:${new Date().toISOString().slice(0, 13)}`;
       if (seen.has(key)) continue;
-      chrome.notifications.create(key, { type: "basic", iconUrl: "images/icon128.png", title: "Plan B Signal Swarm", message: swarm.headline });
+      notificationTargets[key] = "http://127.0.0.1:4173/radar.html";
+      if (announce) chrome.notifications.create(key, { type: "basic", iconUrl: "images/icon128.png", title: "Plan B Signal Swarm", message: swarm.headline });
       seen.add(key);
     }
-    await chrome.storage.local.set({ radarSeen: [...seen].slice(-200) });
+    await chrome.storage.local.set({ radarSeen: [...seen].slice(-200), notificationTargets });
   } catch { /* Alerts retry on the next interval; trading does not depend on them. */ }
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === RADAR_ALARM) pollRadar(); });
+chrome.notifications.onClicked.addListener(async (notificationId) => {
+  const { notificationTargets = {} } = await chrome.storage.local.get("notificationTargets");
+  await chrome.tabs.create({ url: notificationTargets[notificationId] || "http://127.0.0.1:4173/radar.html" });
+  chrome.notifications.clear(notificationId);
+});
 
 // Fetches run here (with host_permissions) to avoid the host page's CORS and CSP restrictions.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -91,7 +110,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         try { body = JSON.parse(text); } catch { body = { message: text }; }
         if (response.ok && method === "POST" && path === "/subscriptions" && message.body && message.body.funderAddress) {
           await chrome.storage.local.set({ radarWallet: message.body.funderAddress });
-          pollRadar();
+          // Mark current followed signals as seen without notifying. Alerts are
+          // for newly published, validated Caller Cards after the user follows.
+          pollRadar({ announce: false });
         }
         sendResponse({ ok: response.ok, status: response.status, body });
       })

@@ -9,7 +9,7 @@ Plan B is a Chrome extension that turns trading signals on X into editable, non-
 - **Simple plan panel:** the normal view asks “How do I get in?” (market, limit, TWAP) and “How do I get out?” (stop + target or none). The original Flash order controls remain under **Advanced**.
 - **Followable Flash strategies:** verified Caller Cards compile a social signal into its exact Flash recipe—market, limit, TWAP, triggered entry or trailing protection. Followers keep their own wallet and size while signing the same execution logic. Atomic attached brackets protect same-chain market, limit and TWAP entries from their first fill.
 - **Signal Passport and caller accountability:** every parsed post or signed Caller Card can preserve a text hash, asset contract, Flash detection price, strategy terms, expiry, source availability checks and an expiry outcome. Only wallet-signed Caller Cards contribute to a caller’s public performance record; unsigned observed posts stay visibly separate.
-- **Attested sources and revisions:** a Caller Card can only attach to an observed post containing its `planb:<id>` reference. Public availability is tracked separately from browser observation, and a caller can publish append-only, independently signed strategy revisions without rewriting the original Passport.
+- **Attested sources and revisions:** a Caller Card can only attach to an observed post containing its `planb:<id>` reference. Public availability is tracked separately from browser observation, a bounded background worker rechecks public sources every 15 minutes by default, and a caller can publish append-only, independently signed strategy revisions without rewriting the original Passport.
 - **Flash execution receipts:** each submitted plan can retain its Flash quote ID, detection time, estimated price impact and fee context. The dashboard exposes quote quality and wallet-signed limit and bracket-protection revisions using Flash’s order update flow.
 - **Contract integrity:** an explicit contract is resolved through Flash exactly as written. Plan B blocks a ticker/contract mismatch instead of silently substituting a same-symbol asset. Ticker-only posts are labelled as symbol-resolved, and assets Flash cannot trade remain informational.
 - **Radar terminal:** `plan-b-landing-page/radar.html` is a read-only feed of signed Caller Cards with freshness (fresh / near entry / chasing / waiting / expired), advanced-order filters, follower counts, signal swarms, Flash-native execution recommendations and caller Passport records.
@@ -19,6 +19,7 @@ Plan B is a Chrome extension that turns trading signals on X into editable, non-
 - **Wallet-native signing:** EIP-712 and EIP-191 on EVM; Ed25519 and transaction signing on Solana. Service keys stay in the backend.
 - **Social execution proof:** submitted plans are mapped to their tweet and author. A backend Flash Orders WebSocket updates plan state and card statistics for followers, target hits and stopped-out plans.
 - **Order dashboard:** open, resolved and cancelled plans are visible inside X. Cancellation uses the canonical Flash cancel message and wallet signature; attached protection can be cancelled with the entry.
+- **Local caller alerts:** Chrome checks followed Caller Cards every minute while the browser is running, shows native notifications only for newly published validated strategies, and opens the exact source when an alert is clicked. No X API or push provider is required.
 - **Share receipts:** resolved plans expose a pre-filled “Share receipt on X” action.
 - **Caller Cards:** `plan-b-landing-page/caller.html` lets a caller validate and sign a structured plan. The generated tweet contains a `planb:<id>` reference that the extension recognizes as verified.
 - **Pre-trade security gate:** Plan B combines Flash risk data, GoPlus token analysis and Honeypot sell simulation where supported. Critical findings hard-block buys; warnings require explicit acknowledgement.
@@ -53,7 +54,7 @@ Passport records capture the signal as seen, not a promise of trade performance:
 - A one-time Flash mark-price direction result after expiry (`price_in_favor` or `price_against`)
 - Source availability history. A post is marked `removed` only after two consecutive public `404` checks; temporary lookup failures are `unavailable`, not evidence of deletion.
 
-The current hackathon build persists Passports in local JSON files under `backend/data/` (ignored by Git). This is useful for a local demo but is **not** a tamper-proof or multi-user production ledger. A production deployment needs authenticated storage, a scheduled source checker and a durable price/outcome source.
+The current hackathon build persists Passports in local JSON files under `backend/data/` (ignored by Git). This is useful for a local demo but is **not** a tamper-proof or multi-user production ledger. A production deployment needs authenticated storage and a durable price/outcome source.
 
 ## Local setup
 

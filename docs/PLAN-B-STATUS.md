@@ -14,14 +14,15 @@ Last updated: 2026-11-06
 ## Social/accountability layer
 
 - **Verified Caller Card:** a caller signs a canonical strategy message. The later X post is attached as source evidence by the extension without modifying that signed strategy.
-- **Source attestation:** a linked post must contain the specific `planb:<id>` reference and is checked immediately against X’s public embed endpoint. The Passport distinguishes `browser_observed`, `public_verified`, `public_available_unverified`, `unavailable`, and `removed`; a public embed check never silently becomes identity proof.
+- **Source attestation:** a linked post must contain the specific `planb:<id>` reference and is checked immediately against X’s public embed endpoint. A bounded backend worker rechecks attested sources every 15 minutes by default (`SOURCE_MONITOR_INTERVAL_MS` is configurable). The Passport distinguishes `browser_observed`, `public_verified`, `public_available_unverified`, `unavailable`, and `removed`; a public embed check never silently becomes identity proof.
 - **Signal Passport:** stores text hash, public source, exact asset, contract-integrity result, Flash detection price, order terms, expiry, availability checks and one expiry mark-price direction result.
 - **Append-only revisions:** a Caller Card signer can publish a separately signed strategy revision with a reason. Original Passport terms never change; Radar shows the newest revision and its explanation. A follower’s open Flash plan can also revise its limit price or its attached stop/target protection with a fresh wallet signature.
-- **Flash execution receipts:** a follower record keeps quote ID, quote time, estimated price impact and fee data. The order dashboard shows available quote quality and supports wallet-signed limit updates through Flash's cancel-and-replace endpoint.
+- **Flash execution receipts:** a follower record keeps quote ID, quote time, estimated price impact and fee data. The order dashboard shows available quote quality and supports wallet-signed limit and attached bracket stop/target updates through Flash's cancel-and-replace endpoint.
 - **No fake combined trust score:** identity verification, historical signed-call outcomes, follower Flash outcomes, contract integrity and token safety remain separate concepts in the UI/data.
 - **Caller record:** only signed Caller Cards count toward hit rate and median price-direction result. Parsed public posts can be observed but never improve a caller score.
 - **Radar:** `GET /terminal` has distinct `verified` and `observed` feeds. Observed posts never count toward reputation and are labelled manual review; the signed feed supports state/order filters, swarm cards, Flash execution recommendations and a browser-local X-handle watchlist.
 - **Methodology gate:** caller records are `unscored`, `emerging`, or `established`; at least five expiry-scored signed Caller Cards are required before the hit rate is labelled established. Chain and order-type counts stay visible rather than becoming a synthetic trust score.
+- **Local notifications:** after a follower enables alerts for a caller, the Chrome extension performs a one-minute local Radar check. It only notifies on newly seen, validated Caller Cards or new swarms; clicking an alert opens its source. This requires no X API or push provider.
 
 ## Important limits (intentional and visible)
 
