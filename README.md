@@ -6,7 +6,21 @@ The Chrome extension is the in-context execution surface; Caller Cards, Radar, t
 
 The product principle is simple: social posts may suggest a strategy, but only the follower chooses size, reviews the exact asset and protections, and signs from their own wallet.
 
-Plan B uses a **production-grade PostgreSQL database** for durable Caller Cards, Signal Passports, revisions, subscriptions, follower plans, World verification records, and Flash lifecycle events. The backend applies ordered migrations before it accepts requests; see [PostgreSQL infrastructure](infra/postgres/README.md).
+## Plan B in one minute
+
+Plan B makes X a place to **plan and execute protected trades**, rather than a place to discover a ticker and rush into a generic market swap.
+
+1. A post on X becomes a constrained strategy draft—not an instruction the app blindly obeys.
+2. Plan B resolves the exact asset, checks contract integrity and token risk, then decides whether the post is a valid signal or only context for a manual trade.
+3. It recommends the right Definitive Flash structure: market, limit, TWAP/DCA, stop entry, stop-loss, take-profit, bracket, or trailing protection.
+4. The follower edits the plan, chooses their own size, and signs with their own EVM or Solana wallet. Plan B never holds keys or auto-trades.
+5. The signal receives a Passport, and its source evidence, expiry result, caller record, and actual follower outcomes remain visible in Radar, Passports, Rankings, and Outcomes.
+
+## Why Definitive Flash
+
+Most tweet-to-trade products stop at “buy this token.” That is the wrong execution model for a social signal: a pullback needs a limit, a breakout needs a stop entry, a late call may need a TWAP, and a thesis with risk levels needs a bracket.
+
+Definitive Flash is what lets Plan B treat those as real, managed onchain orders through one non-custodial integration across EVM and Solana. Flash provides the quote → wallet-signature → order-submission → lifecycle path for the advanced order types themselves; Plan B supplies the social interpretation, safety gates, accountability record, and follower-controlled execution policy around it.
 
 ## Why Plan B exists
 
