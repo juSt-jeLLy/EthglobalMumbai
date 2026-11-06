@@ -4,6 +4,7 @@ const crypto = require('crypto')
 const { verifyMessage } = require('ethers')
 const { validateDraft } = require('./parser.js')
 const { searchAssets } = require('./flash.js')
+const { humanVerificationFor, worldVerificationRequired } = require('./world-human.js')
 
 const DATA_DIR = path.join(__dirname, 'data')
 const DATA_FILE = path.join(DATA_DIR, 'signals.json')
@@ -220,6 +221,10 @@ async function createSignalCtrl(req, res) {
     }
     const recovered = verifyMessage(message, signature).toLowerCase()
     if (recovered !== signer) return res.status(401).json({ error: 'InvalidSignature', message: 'The caller signature does not match the wallet.' })
+    const humanVerification = humanVerificationFor(signer)
+    if (worldVerificationRequired() && !humanVerification) {
+      return res.status(403).json({ error: 'HumanVerificationRequired', message: 'Verify this caller wallet with World ID before publishing a Caller Card.' })
+    }
     const id = crypto.randomUUID()
     const signal = {
       id,
@@ -227,10 +232,15 @@ async function createSignalCtrl(req, res) {
       signer,
       signature,
       verified: true,
+      humanVerification,
       version: 1,
       createdAt: new Date().toISOString(),
     }
     signal.passport = passportFor(result, { authorHandle: req.body && req.body.authorHandle, tweetId: req.body && req.body.tweetId, text: req.body && req.body.text })
+    signal.passport.caller = {
+      walletSignature: 'verified',
+      humanVerification: humanVerification || { status: 'not_verified' },
+    }
     signals.push(signal)
     saveSignals()
     const action = result.draft.side === 'buy' ? 'Buy' : 'Sell'
@@ -242,7 +252,8 @@ async function createSignalCtrl(req, res) {
           ? `when price crosses ${result.draft.triggerDirection} ${result.draft.triggerPrice}`
           : `${result.draft.entryType} at ${result.draft.entryPrice || result.draft.triggerPrice || 'market'}`
     const protection = result.draft.stopLoss && result.draft.takeProfit ? ` · stop ${result.draft.stopLoss} · target ${result.draft.takeProfit}` : result.draft.trailPercent ? ` · trail ${result.draft.trailPercent}%` : ''
-    res.status(201).json({ signal, tweetText: `${action} $${result.draft.token} on ${result.draft.chain} ${entry}${protection}\n\nFollow this ${result.strategy.summary} strategy on Plan B · planb:${id}` })
+    const callerLabel = humanVerification ? 'Verified Human Caller' : 'Wallet-signed Caller'
+    res.status(201).json({ signal, tweetText: `${action} $${result.draft.token} on ${result.draft.chain} ${entry}${protection}\n\n${callerLabel} · Follow this ${result.strategy.summary} strategy on Plan B · planb:${id}` })
   } catch (error) {
     res.status(Number(error.status) || 422).json({ error: 'InvalidPlan', message: error.message })
   }
@@ -353,6 +364,7 @@ async function creatorProfileCtrl(req, res) {
   res.json({
     creator: requested,
     verifiedIdentity: verifiedRows.some((signal) => String(signal.signer || '').toLowerCase() === requested),
+    verifiedHuman: verifiedRows.some((signal) => signal.humanVerification && signal.humanVerification.status === 'world_verified'),
     signals: verifiedRows.length,
     observedSignals: rows.filter((signal) => !signal.verified).length,
     scored: settled.length,

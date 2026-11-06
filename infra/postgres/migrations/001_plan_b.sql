@@ -7,6 +7,8 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE callers (
   signer_address TEXT PRIMARY KEY,
   display_handle TEXT,
+  world_human_verified_at TIMESTAMPTZ,
+  world_action TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -113,3 +115,13 @@ CREATE TABLE subscriptions (
 );
 
 CREATE INDEX subscriptions_funder_enabled_idx ON subscriptions (funder_address) WHERE enabled;
+
+CREATE TABLE world_human_verifications (
+  action TEXT NOT NULL,
+  nullifier NUMERIC(78, 0) NOT NULL,
+  signer_address TEXT NOT NULL REFERENCES callers(signer_address),
+  environment TEXT NOT NULL,
+  verified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (action, nullifier),
+  UNIQUE (action, signer_address)
+);

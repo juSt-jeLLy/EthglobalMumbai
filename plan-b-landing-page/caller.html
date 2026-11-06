@@ -11,7 +11,7 @@
 <body class="caller-page">
   <header class="site-nav shell"><a class="brand" href="index.html"><img src="assets/logo.png" alt="" width="32" height="32"><span>PLAN B</span></a><a class="nav-cta" href="index.html">Back home</a></header>
   <main class="caller-shell shell">
-    <section class="caller-copy"><span class="eyebrow">VERIFIED / FOLLOWABLE STRATEGY</span><h1>Publish a strategy people can follow.</h1><p>Publish a real Flash strategy—not a vague ticker call. Choose market, limit, TWAP, triggered, bracket, or trailing logic; followers use their own size and can protect or adapt execution with their own rules.</p><div class="caller-note">Your signature proves who created the strategy. It does not place an order, copy funds, or approve token spending.</div></section>
+    <section class="caller-copy"><span class="eyebrow">VERIFIED / FOLLOWABLE STRATEGY</span><h1>Publish a strategy people can follow.</h1><p>Publish a real Flash strategy—not a vague ticker call. Choose market, limit, TWAP, triggered, bracket, or trailing logic; followers use their own size and can protect or adapt execution with their own rules.</p><div class="caller-note">Your wallet signature proves who created the strategy. When enabled, World ID additionally proves the caller is one unique human—without revealing their identity. Neither step places an order or approves token spending.</div></section>
     <form class="caller-form" id="caller-form">
       <div class="field-grid"><label><span>Token</span><input name="token" placeholder="AERO" required></label><label><span>Chain</span><select name="chain"><option>base</option><option>ethereum</option><option>arbitrum</option><option>optimism</option><option>solana</option><option>avalanche</option><option>bsc</option><option>polygon</option></select></label></div>
       <div class="field-grid"><label><span>Side</span><select name="side"><option value="buy">Buy</option><option value="sell">Sell</option></select></label><label><span>Flash order type</span><select name="entryType" id="caller-entry"><option value="market">Market</option><option value="limit">Limit</option><option value="twap">TWAP / scale-in</option><option value="stop">Stop / breakout entry</option><option value="stop-loss">Stop loss (held position)</option><option value="take-profit">Take profit (held position)</option><option value="bracket">Bracket (held position)</option><option value="trailing-stop">Trailing stop</option><option value="trailing-stop-limit">Trailing stop limit</option></select></label></div>
@@ -20,10 +20,17 @@
       <div class="field-grid"><label><span>TWAP buckets</span><input name="bucketCount" inputmode="numeric" placeholder="e.g. 12"></label><label><span>Expiry (hours)</span><input name="expiryHours" inputmode="decimal" placeholder="Optional"></label></div>
       <div class="field-grid"><label><span>Stop loss</span><input name="stopLoss" inputmode="decimal" placeholder="Optional bracket"></label><label><span>Take profit</span><input name="takeProfit" inputmode="decimal" placeholder="Optional bracket"></label></div>
       <div class="field-grid"><label><span>Trailing distance (%)</span><input name="trailPercent" inputmode="decimal" placeholder="Trailing only"></label><label><span>Trail activation price</span><input name="activationPrice" inputmode="decimal" placeholder="Optional"></label></div>
+      <section class="human-proof" id="human-proof" aria-live="polite">
+        <div><span class="human-kicker">CALLER AUTHENTICITY</span><b id="human-title">Wallet-signed caller</b><p id="human-copy">World Proof of Human can be required before a caller publishes a strategy.</p></div>
+        <button class="button button-small" id="verify-human" type="button" hidden>Verify humanity</button>
+        <div class="world-connector" id="world-connector" hidden><div class="world-qr" id="world-qr" aria-label="World ID verification QR code"></div><div><b>Scan with World App</b><p>Approve the Proof of Human request for this connected wallet.</p><a class="text-link" id="world-open" target="_blank" rel="noopener">Open World App ↗</a></div></div>
+      </section>
       <button class="button caller-submit" type="submit">Validate and sign strategy</button><p class="caller-status" id="caller-status"></p>
       <section class="caller-result" id="caller-result" hidden><span>Verified strategy tweet text</span><textarea id="caller-tweet" readonly></textarea><div><button class="button" id="copy-tweet" type="button">Copy tweet text</button><a class="text-link" id="open-x" target="_blank" rel="noopener">Open in X ↗</a></div><div class="revision-tools"><label><span>Revision note</span><input id="revision-reason" maxlength="240" placeholder="Why did this plan change?"></label><button class="button button-small" id="publish-revision" type="button">Sign current form as revision</button></div><p class="caller-status" id="revision-status"></p></section>
     </form>
   </main>
+  <script src="assets/world-id/qrcode-generator-1.4.4.js"></script>
+  <script src="assets/world-id/idkit.global.js"></script>
   <script src="caller.js"></script>
 </body>
 </html>

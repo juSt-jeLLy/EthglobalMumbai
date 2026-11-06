@@ -8,6 +8,7 @@ const { createPlanCtrl, listPlansCtrl, socialProofCtrl, leaderboardCtrl, planEve
 const { startFlashOrderStream } = require('./flash-stream.js')
 const { prepareSignalCtrl, createSignalCtrl, captureSignalCtrl, attachSourceCtrl, prepareRevisionCtrl, createRevisionCtrl, passportCtrl, creatorProfileCtrl, getSignalCtrl, startSourceMonitor } = require('./signals.js')
 const { subscribeCtrl, radarCtrl, terminalCtrl, roomCtrl } = require('./radar.js')
+const { statusCtrl: worldStatusCtrl, rpContextCtrl: worldRpContextCtrl, verifyCtrl: verifyWorldHumanCtrl } = require('./world-human.js')
 const app = express()
 const port = process.env.PORT || 8000
 
@@ -49,6 +50,9 @@ app.post('/signals/capture', captureSignalCtrl)
 app.post('/signals/:id/source', attachSourceCtrl)
 app.post('/signals/:id/revisions/message', prepareRevisionCtrl)
 app.post('/signals/:id/revisions', createRevisionCtrl)
+app.get('/world/status', worldStatusCtrl)
+app.post('/world/rp-context', worldRpContextCtrl)
+app.post('/world/verify', verifyWorldHumanCtrl)
 app.post('/subscriptions', subscribeCtrl)
 app.get('/radar', radarCtrl)
 app.get('/terminal', terminalCtrl)

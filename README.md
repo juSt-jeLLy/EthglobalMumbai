@@ -97,6 +97,12 @@ Important execution notices are kept visible: first approvals may cost gas; gaps
 
 A caller can create a structured strategy from [Caller Card](plan-b-landing-page/caller.html), sign a canonical message with their wallet, and publish the supplied X text containing `planb:<id>`.
 
+Optionally, **World ID Proof of Human** can be required before a wallet may
+publish a Caller Card. This makes caller reputation more resistant to Sybil
+farms: World proves one unique human has enrolled the caller wallet, while the
+wallet signature still binds every individual strategy. It does not claim to
+prove ownership of an X account. See [World ID setup](docs/world-id.md).
+
 Each saved signal has a **Signal Passport**. It can preserve:
 
 - source post ID, URL, author handle, and SHA-256 text hash;
@@ -221,6 +227,12 @@ GROQ_MODEL=openai/gpt-oss-20b
 GOPLUS_ACCESS_TOKEN=              # optional
 SOURCE_MONITOR_INTERVAL_MS=900000 # optional; defaults to 15 min
 EXTENSION_ID=                     # optional local CORS restriction
+WORLD_APP_ID=                     # optional Proof of Human integration
+WORLD_RP_ID=
+WORLD_RP_SIGNING_KEY=             # backend-only secret
+WORLD_ACTION=planb-verified-caller-v1
+WORLD_ENVIRONMENT=staging         # simulator only; use production for live proofs
+WORLD_REQUIRE_CALLER_VERIFICATION=false
 ```
 
 Then run:
@@ -273,6 +285,7 @@ Open:
 | `POST /signals` | Create a wallet-signed Caller Card |
 | `POST /signals/:id/source` | Attach and attest a published Caller Card source |
 | `POST /signals/:id/revisions/*` | Create append-only caller-signed revisions |
+| `GET /world/status`; `POST /world/rp-context`, `/world/verify` | World ID Proof of Human enrollment and verified-caller status |
 | `POST /signals/capture` | Keep unsigned observed signals separate from caller reputation |
 | `GET /signals/:id/passport` | Read a Passport; optionally refresh public availability |
 | `GET /creators/:creator` | Read caller methodology-gated history |
